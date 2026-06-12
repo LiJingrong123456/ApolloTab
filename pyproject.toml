@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ApolloTab"
-version = "0.2.3"
+version = "0.2.4"
 description = "Guitar Pro file parsing, rendering, and audio playback engine library"
 readme = "README.md"
 license = "MPL-2.0"
@@ -80,8 +80,7 @@ dev = [
 Homepage = "https://github.com/Zhuwenqian/ApolloTab"
 Documentation = "https://github.com/Zhuwenqian/ApolloTab#readme"
 Repository = "https://github.com/Zhuwenqian/ApolloTab.git"
-Issues = "https://github.com/Zhuwenqian/ApolloTabissues"
-
+Issues = "https://github.com/Zhuwenqian/ApolloTab/issues"
 [tool.setuptools]
 # 自动发现所有子包（parser/renderer/audio/models/utils）
 [tool.setuptools.packages.find]

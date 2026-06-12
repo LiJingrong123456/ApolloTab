@@ -426,7 +426,7 @@ Issues and Pull Requests are welcome!
 
 ***
 
-**Version**: v0.2.3
+**Version**: v0.2.4
 **Last Updated**: 2026-06-12
 **Compatibility**: Windows / Linux / macOS (Python 3.8+)
 
@@ -891,6 +891,6 @@ twine upload dist/*
 
 ***
 
-**版本**: v0.2.3
+**版本**: v0.2.4
 **最后更新**: 2026-06-12
 **兼容性**: Windows / Linux / macOS (Python 3.8+)

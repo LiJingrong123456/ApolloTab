@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: ApolloTab
-Version: 0.2.3
+Version: 0.2.4
 Summary: Guitar Pro file parsing, rendering, and audio playback engine library
 Author: ZhuWenqian
 Maintainer: ZhuWenqian
@@ -8,7 +8,7 @@ License-Expression: MPL-2.0
 Project-URL: Homepage, https://github.com/Zhuwenqian/ApolloTab
 Project-URL: Documentation, https://github.com/Zhuwenqian/ApolloTab#readme
 Project-URL: Repository, https://github.com/Zhuwenqian/ApolloTab.git
-Project-URL: Issues, https://github.com/Zhuwenqian/ApolloTabissues
+Project-URL: Issues, https://github.com/Zhuwenqian/ApolloTab/issues
 Keywords: guitar-pro,gtp,tab,music,midi,renderer,audio,synth,guitar
 Classifier: Development Status :: 4 - Beta
 Classifier: Intended Audience :: Developers
@@ -470,7 +470,7 @@ Issues and Pull Requests are welcome!
 
 ***
 
-**Version**: v0.2.3
+**Version**: v0.2.4
 **Last Updated**: 2026-06-12
 **Compatibility**: Windows / Linux / macOS (Python 3.8+)
 
@@ -935,6 +935,6 @@ twine upload dist/*
 
 ***
 
-**版本**: v0.2.3
+**版本**: v0.2.4
 **最后更新**: 2026-06-12
 **兼容性**: Windows / Linux / macOS (Python 3.8+)
