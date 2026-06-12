@@ -14,7 +14,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 [project]
 name = "ApolloTab"
 version = "0.2.0"
-description = "Guitar Pro文件解析、渲染与音频播放引擎库"
+description = "Guitar Pro file parsing, rendering, and audio playback engine library"
 readme = "README.md"
 license = {text = "MPL-2.0"}
 authors = [
@@ -78,10 +78,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-repo/ApolloTab"
-Documentation = "https://github.com/your-repo/ApolloTab#readme"
-Repository = "https://github.com/your-repo/ApolloTab.git"
-Issues = "https://github.com/your-repo/ApolloTab/issues"
+Homepage = "https://github.com/Zhuwenqian/ApolloTab"
+Documentation = "https://github.com/Zhuwenqian/ApolloTab#readme"
+Repository = "https://github.com/Zhuwenqian/ApolloTab.git"
+Issues = "https://github.com/Zhuwenqian/ApolloTabissues"
 
 [tool.setuptools]
 # 包目录（相对于pyproject.toml位置）
