@@ -18,10 +18,10 @@ description = "Guitar Pro文件解析、渲染与音频播放引擎库"
 readme = "README.md"
 license = {text = "MPL-2.0"}
 authors = [
-    {name = "TAB Score Viewer Team"}
+    {name = "ZhuWenqian"}
 ]
 maintainers = [
-    {name = "TAB Score Viewer Team"}
+    {name = "ZhuWenqian"}
 ]
 keywords = [
     "guitar-pro",
