@@ -1,0 +1,109 @@
+# ============================================================
+# pyproject.toml - ApolloTab Python包配置
+# 用途: 定义PyPI发布所需的元数据、依赖和构建配置
+# 构建工具: setuptools + wheel (兼容Python 3.8+)
+# 安装命令: pip install .
+# 发布命令: python -m build && twine upload dist/*
+# 创建日期: 2026-06-12
+# ============================================================
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "ApolloTab"
+version = "0.2.0"
+description = "Guitar Pro文件解析、渲染与音频播放引擎库"
+readme = "README.md"
+license = {text = "MPL-2.0"}
+authors = [
+    {name = "TAB Score Viewer Team"}
+]
+maintainers = [
+    {name = "TAB Score Viewer Team"}
+]
+keywords = [
+    "guitar-pro",
+    "gtp",
+    "tab",
+    "music",
+    "midi",
+    "renderer",
+    "audio",
+    "synth",
+    "guitar",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: MIDI",
+    "Topic :: Multimedia :: Graphics",
+    "Typing :: Typed",
+]
+requires-python = ">=3.8"
+
+# 核心依赖（安装时自动安装）
+dependencies = [
+    "pyguitarpro>=0.11",      # Guitar Pro文件解析（开源项目: pyguitarpro）
+    "PyQt5>=5.15",            # GUI渲染框架（用于生成QPixmap图像）
+    "pyfluidsynth>=1.4.0",    # FluidSynth Python绑定（音频合成）
+]
+
+# 可选依赖组
+[project.optional-dependencies]
+# 完整功能（含所有可选特性）
+full = [
+    "pyguitarpro>=0.11",
+    "PyQt5>=5.15",
+    "pyfluidsynth>=1.4.0",
+]
+# 开发环境（测试、lint、构建）
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "isort>=5.12",
+    "mypy>=1.0",
+    "build>=0.10",
+    "twine>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-repo/ApolloTab"
+Documentation = "https://github.com/your-repo/ApolloTab#readme"
+Repository = "https://github.com/your-repo/ApolloTab.git"
+Issues = "https://github.com/your-repo/ApolloTab/issues"
+
+[tool.setuptools]
+# 包目录（相对于pyproject.toml位置）
+packages = ["ApolloTab"]
+
+# 包发现模式
+[tool.setuptools.package-data]
+"ApolloTab" = ["*.pyi", "py.typed"]
+
+# 黑代码格式化配置
+[tool.black]
+line-length = 100
+target-version = ["py38"]
+
+# isort导入排序配置
+[tool.isort]
+profile = "black"
+line_length = 100
+
+# mypy类型检查配置
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

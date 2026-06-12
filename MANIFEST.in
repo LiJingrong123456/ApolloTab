@@ -1,0 +1,22 @@
+# MANIFEST.in - ApolloTab 包分发配置
+# 用途: 指定打包时应包含的非Python文件
+
+# 包含 README 和 LICENSE
+include ApolloTab/README.md
+include ApolloTab/LICENSE
+
+# 包含类型提示标记
+include ApolloTab/py.typed
+
+# 包含示例代码（可选，供用户参考）
+recursive-include examples *.py
+
+# 排除不必要的文件
+global-exclude __pycache__/*
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude .git/*
+global-exclude .DS_Store
+global-exclude *.so
+global-exclude *.dll
+global-exclude *.dylib
