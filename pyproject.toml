@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ApolloTab"
-version = "0.2.0"
+version = "0.2.3"
 description = "Guitar Pro file parsing, rendering, and audio playback engine library"
 readme = "README.md"
 license = "MPL-2.0"
@@ -83,8 +83,10 @@ Repository = "https://github.com/Zhuwenqian/ApolloTab.git"
 Issues = "https://github.com/Zhuwenqian/ApolloTabissues"
 
 [tool.setuptools]
-# 包目录（相对于pyproject.toml位置）
-packages = ["ApolloTab"]
+# 自动发现所有子包（parser/renderer/audio/models/utils）
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["venv*", "tests*", "__pycache__*"]
 
 # 包发现模式
 [tool.setuptools.package-data]

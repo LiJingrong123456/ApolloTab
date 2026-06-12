@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: ApolloTab
-Version: 0.2.0
+Version: 0.2.3
 Summary: Guitar Pro file parsing, rendering, and audio playback engine library
 Author: ZhuWenqian
 Maintainer: ZhuWenqian
@@ -230,30 +230,31 @@ if __name__ == "__main__":
 
 ### Core Functions
 
-| Function | Description | Return Value |
-|----------|-------------|--------------|
-| `parse_gtp(path)` | Parse GTP file | `GTPSong` |
+| Function                        | Description               | Return Value    |
+| ------------------------------- | ------------------------- | --------------- |
+| `parse_gtp(path)`               | Parse GTP file            | `GTPSong`       |
 | `render_gtp(path, track_index)` | One-click render GTP file | `List[QPixmap]` |
 
 ### Main Classes
 
 #### Data Models (`ApolloTab.models`)
 
-| Class | Description |
-|-------|-------------|
-| `GTPSong` | Song object (title/artist/BPM/tracks list) |
-| `GTPTrack` | Track object (name/tuning/measures list) |
+| Class        | Description                                             |
+| ------------ | ------------------------------------------------------- |
+| `GTPSong`    | Song object (title/artist/BPM/tracks list)              |
+| `GTPTrack`   | Track object (name/tuning/measures list)                |
 | `GTPMeasure` | Measure object (time signature/repeat marks/beats list) |
-| `GTPBeat` | Beat object (duration/dot/notes list) |
-| `GTPNote` | Note object (fret/string/MIDI pitch/techniques) |
+| `GTPBeat`    | Beat object (duration/dot/notes list)                   |
+| `GTPNote`    | Note object (fret/string/MIDI pitch/techniques)         |
 
 #### Parser (`ApolloTab.parser`)
 
-| Class | Description |
-|-------|-------------|
+| Class       | Description           |
+| ----------- | --------------------- |
 | `GTPParser` | GTP file parser class |
 
 **Usage**:
+
 ```python
 from ApolloTab.parser import GTPParser
 
@@ -263,12 +264,13 @@ song = parser.parse("song.gp5")
 
 #### Renderer (`ApolloTab.renderer`)
 
-| Class | Description |
-|-------|-------------|
-| `TabRenderer` | Tablature rendering engine |
-| `TabLayoutEngine` | Layout calculation engine |
+| Class             | Description                |
+| ----------------- | -------------------------- |
+| `TabRenderer`     | Tablature rendering engine |
+| `TabLayoutEngine` | Layout calculation engine  |
 
 **Usage**:
+
 ```python
 from ApolloTab.renderer import TabRenderer, RenderConfig
 
@@ -278,13 +280,14 @@ pages = renderer.render(song, track_index=0)
 
 #### Audio Engine (`ApolloTab.audio`)
 
-| Class | Description |
-|-------|-------------|
-| `MidiConverter` | GTP data to MIDI event converter |
-| `SynthEngine` | FluidSynth audio synthesis engine |
-| `MidiEvent` | Single MIDI event data model |
+| Class           | Description                       |
+| --------------- | --------------------------------- |
+| `MidiConverter` | GTP data to MIDI event converter  |
+| `SynthEngine`   | FluidSynth audio synthesis engine |
+| `MidiEvent`     | Single MIDI event data model      |
 
 **Usage**:
+
 ```python
 from ApolloTab.audio import MidiConverter, SynthEngine
 
@@ -300,12 +303,12 @@ engine.play()
 
 #### Utilities (`ApolloTab.utils`)
 
-| Class / Constant | Description |
-|------------------|-------------|
-| `RenderConfig` | Rendering parameter configuration (all adjustable) |
-| `TechniqueType` | Technique type enum (18 types) |
-| `StandardTunings` | Standard tuning definitions |
-| `NoteDuration` | Duration enum |
+| Class / Constant  | Description                                        |
+| ----------------- | -------------------------------------------------- |
+| `RenderConfig`    | Rendering parameter configuration (all adjustable) |
+| `TechniqueType`   | Technique type enum (18 types)                     |
+| `StandardTunings` | Standard tuning definitions                        |
+| `NoteDuration`    | Duration enum                                      |
 
 ## Configuration
 
@@ -350,24 +353,24 @@ engine = SynthEngine(
 
 ## Supported Techniques
 
-| Technique | Abbreviation | Symbol Type |
-|-----------|-------------|-------------|
-| Hammer-On | H | Text label |
-| Pull-Off | P | Text label |
-| Slide Up | s/S | Line + arrow |
-| Slide Down | S | Line + arrow |
-| Bend | B | Arc + arrow + degree |
-| Vibrato | ~ | Wavy line |
-| Palm Mute | P.M. | Dashed extension |
-| Staccato | . | Dot mark |
-| Let Ring | Dashed extension | |
-| Natural Harmonic N.H. | Diamond mark | |
-| Artificial Harmonic A.H. | Diamond + text | |
-| Tremolo Picking Trem.Pick. | Diagonal underline | |
-| Trill | "tr" text | |
-| Grace Note | Small note | |
-| Accentuated | > | Symbol |
-| Ghost Note | Parentheses | |
+| Technique                  | Abbreviation       | Symbol Type          |
+| -------------------------- | ------------------ | -------------------- |
+| Hammer-On                  | H                  | Text label           |
+| Pull-Off                   | P                  | Text label           |
+| Slide Up                   | s/S                | Line + arrow         |
+| Slide Down                 | S                  | Line + arrow         |
+| Bend                       | B                  | Arc + arrow + degree |
+| Vibrato                    | \~                 | Wavy line            |
+| Palm Mute                  | P.M.               | Dashed extension     |
+| Staccato                   | .                  | Dot mark             |
+| Let Ring                   | Dashed extension   | <br />               |
+| Natural Harmonic N.H.      | Diamond mark       | <br />               |
+| Artificial Harmonic A.H.   | Diamond + text     | <br />               |
+| Tremolo Picking Trem.Pick. | Diagonal underline | <br />               |
+| Trill                      | "tr" text          | <br />               |
+| Grace Note                 | Small note         | <br />               |
+| Accentuated                | >                  | Symbol               |
+| Ghost Note                 | Parentheses        | <br />               |
 
 ## Development Guide
 
@@ -433,21 +436,21 @@ twine upload dist/*
 
 ### Required Dependencies
 
-| Package | Version | Purpose | License |
-|---------|---------|---------|---------|
-| [pyguitarpro](https://github.com/ozono/guitarpro) | >=0.11 | Guitar Pro file parsing | LGPL-2.1 |
-| [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) | >=5.15 | GUI rendering framework | GPL v3 |
+| Package                                                    | Version | Purpose                   | License  |
+| ---------------------------------------------------------- | ------- | ------------------------- | -------- |
+| [pyguitarpro](https://github.com/ozono/guitarpro)          | >=0.11  | Guitar Pro file parsing   | LGPL-2.1 |
+| [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) | >=5.15  | GUI rendering framework   | GPL v3   |
 | [pyfluidsynth](https://github.com/nwhitehead/pyfluidsynth) | >=1.4.0 | FluidSynth Python binding | LGPL-2.1 |
 
 ### Optional Dependencies
 
-| Group | Package | Purpose |
-|-------|---------|---------|
-| dev | pytest, black, isort, mypy | Development and testing tools |
+| Group | Package                    | Purpose                       |
+| ----- | -------------------------- | ----------------------------- |
+| dev   | pytest, black, isort, mypy | Development and testing tools |
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MPL 2.0](LICENSE).
 
 ## Contributing
 
@@ -465,15 +468,15 @@ Issues and Pull Requests are welcome!
 - **[pyguitarpro](https://github.com/ozono/guitarpro)** - Underlying library for Guitar Pro file parsing
 - **[FluidSynth](https://github.com/FluidSynth/fluidsynth)** - Real-time MIDI synthesis engine
 
----
+***
 
-**Version**: v0.2.0
+**Version**: v0.2.3
 **Last Updated**: 2026-06-12
 **Compatibility**: Windows / Linux / macOS (Python 3.8+)
 
----
+***
 
----
+***
 
 # ApolloTab（中文）
 
@@ -679,30 +682,31 @@ if __name__ == "__main__":
 
 ### 核心函数
 
-| 函数 | 说明 | 返回值 |
-|------|------|--------|
-| `parse_gtp(path)` | 解析GTP文件 | `GTPSong` |
+| 函数                              | 说明        | 返回值             |
+| ------------------------------- | --------- | --------------- |
+| `parse_gtp(path)`               | 解析GTP文件   | `GTPSong`       |
 | `render_gtp(path, track_index)` | 一键渲染GTP文件 | `List[QPixmap]` |
 
 ### 主要类
 
 #### 数据模型 (`ApolloTab.models`)
 
-| 类名 | 说明 |
-|------|------|
-| `GTPSong` | 歌曲对象（标题/艺术家/BPM/音轨列表） |
-| `GTPTrack` | 音轨对象（名称/调弦/小节列表） |
-| `GTPMeasure` | 小节对象（拍号/重复记号/拍列表） |
-| `GTPBeat` | 拍对象（时值/附点/音符列表） |
-| `GTPNote` | 音符对象（品格/弦/MIDI音高/技巧） |
+| 类名           | 说明                    |
+| ------------ | --------------------- |
+| `GTPSong`    | 歌曲对象（标题/艺术家/BPM/音轨列表） |
+| `GTPTrack`   | 音轨对象（名称/调弦/小节列表）      |
+| `GTPMeasure` | 小节对象（拍号/重复记号/拍列表）     |
+| `GTPBeat`    | 拍对象（时值/附点/音符列表）       |
+| `GTPNote`    | 音符对象（品格/弦/MIDI音高/技巧）  |
 
 #### 解析器 (`ApolloTab.parser`)
 
-| 类名 | 说明 |
-|------|------|
+| 类名          | 说明        |
+| ----------- | --------- |
 | `GTPParser` | GTP文件解析器类 |
 
 **用法**:
+
 ```python
 from ApolloTab.parser import GTPParser
 
@@ -712,12 +716,13 @@ song = parser.parse("song.gp5")
 
 #### 渲染器 (`ApolloTab.renderer`)
 
-| 类名 | 说明 |
-|------|------|
-| `TabRenderer` | 六线谱渲染引擎 |
-| `TabLayoutEngine` | 布局计算引擎 |
+| 类名                | 说明      |
+| ----------------- | ------- |
+| `TabRenderer`     | 六线谱渲染引擎 |
+| `TabLayoutEngine` | 布局计算引擎  |
 
 **用法**:
+
 ```python
 from ApolloTab.renderer import TabRenderer, RenderConfig
 
@@ -727,13 +732,14 @@ pages = renderer.render(song, track_index=0)
 
 #### 音频引擎 (`ApolloTab.audio`)
 
-| 类名 | 说明 |
-|------|------|
-| `MidiConverter` | GTP数据→MIDI事件转换器 |
-| `SynthEngine` | FluidSynth音频合成引擎 |
-| `MidiEvent` | 单个MIDI事件数据模型 |
+| 类名              | 说明               |
+| --------------- | ---------------- |
+| `MidiConverter` | GTP数据→MIDI事件转换器  |
+| `SynthEngine`   | FluidSynth音频合成引擎 |
+| `MidiEvent`     | 单个MIDI事件数据模型     |
 
 **用法**:
+
 ```python
 from ApolloTab.audio import MidiConverter, SynthEngine
 
@@ -749,12 +755,12 @@ engine.play()
 
 #### 工具 (`ApolloTab.utils`)
 
-| 类/常量 | 说明 |
-|---------|------|
-| `RenderConfig` | 渲染参数配置（全部可调） |
-| `TechniqueType` | 技巧类型枚举（18种） |
-| `StandardTunings` | 标准调弦定义 |
-| `NoteDuration` | 时值枚举 |
+| 类/常量              | 说明           |
+| ----------------- | ------------ |
+| `RenderConfig`    | 渲染参数配置（全部可调） |
+| `TechniqueType`   | 技巧类型枚举（18种）  |
+| `StandardTunings` | 标准调弦定义       |
+| `NoteDuration`    | 时值枚举         |
 
 ## 配置说明
 
@@ -799,24 +805,24 @@ engine = SynthEngine(
 
 ## 支持的演奏技巧
 
-| 技巧 | 缩写 | 符号类型 |
-|------|------|----------|
-| 击弦 Hammer-On | H | 文字标签 |
-| 勾弦 Pull-Off | P | 文字标签 |
-| 上滑音 Slide Up | s/S | 连线+箭头 |
-| 下滑音 Slide Down | S | 连线+箭头 |
-| 推弦 Bend | B | 弧线+箭头+度数 |
-| 颤音 Vibrato | ~ | 波浪线 |
-| 闷音 Palm Mute | P.M. | 虚线延长线 |
-| 断奏 Staccato | . | 点标记 |
-| 延音 Let Ring | 虚线延长线 | |
-| 自然泛音 N.H. | 菱形标记 | |
-| 人工泛音 A.H. | 菱形+文字 | |
-| 震音拨弦 Trem.Pick. | 斜线下划线 | |
-| 颤音 Trill | "tr"文字 | |
-| 装饰音 Grace Note | 小音符 | |
-| 重音 Accentuated | > | 符号 |
-| 幽灵音 Ghost Note | 括号包裹 | |
+| 技巧              | 缩写     | 符号类型     |
+| --------------- | ------ | -------- |
+| 击弦 Hammer-On    | H      | 文字标签     |
+| 勾弦 Pull-Off     | P      | 文字标签     |
+| 上滑音 Slide Up    | s/S    | 连线+箭头    |
+| 下滑音 Slide Down  | S      | 连线+箭头    |
+| 推弦 Bend         | B      | 弧线+箭头+度数 |
+| 颤音 Vibrato      | \~     | 波浪线      |
+| 闷音 Palm Mute    | P.M.   | 虚线延长线    |
+| 断奏 Staccato     | .      | 点标记      |
+| 延音 Let Ring     | 虚线延长线  | <br />   |
+| 自然泛音 N.H.       | 菱形标记   | <br />   |
+| 人工泛音 A.H.       | 菱形+文字  | <br />   |
+| 震音拨弦 Trem.Pick. | 斜线下划线  | <br />   |
+| 颤音 Trill        | "tr"文字 | <br />   |
+| 装饰音 Grace Note  | 小音符    | <br />   |
+| 重音 Accentuated  | >      | 符号       |
+| 幽灵音 Ghost Note  | 括号包裹   | <br />   |
 
 ## 开发指南
 
@@ -895,21 +901,21 @@ twine upload dist/*
 
 ### 必需依赖
 
-| 包名 | 版本 | 用途 | 许可证 |
-|------|------|------|--------|
-| [pyguitarpro](https://github.com/ozono/guitarpro) | >=0.11 | Guitar Pro文件解析 | LGPL-2.1 |
-| [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) | >=5.15 | GUI渲染框架 | GPL v3 |
+| 包名                                                         | 版本      | 用途                  | 许可证      |
+| ---------------------------------------------------------- | ------- | ------------------- | -------- |
+| [pyguitarpro](https://github.com/ozono/guitarpro)          | >=0.11  | Guitar Pro文件解析      | LGPL-2.1 |
+| [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) | >=5.15  | GUI渲染框架             | GPL v3   |
 | [pyfluidsynth](https://github.com/nwhitehead/pyfluidsynth) | >=1.4.0 | FluidSynth Python绑定 | LGPL-2.1 |
 
 ### 可选依赖
 
-| 组名 | 包名 | 用途 |
-|------|------|------|
+| 组名  | 包名                         | 用途      |
+| --- | -------------------------- | ------- |
 | dev | pytest, black, isort, mypy | 开发和测试工具 |
 
 ## 许可证
 
-本项目采用 [MIT License](LICENSE) 开源协议。
+本项目采用 [MPL 2.0](LICENSE) 开源协议。
 
 ## 贡献
 
@@ -927,8 +933,8 @@ twine upload dist/*
 - **[pyguitarpro](https://github.com/ozono/guitarpro)** - Guitar Pro 文件解析底层库
 - **[FluidSynth](https://github.com/FluidSynth/fluidsynth)** - 实时 MIDI 合成引擎
 
----
+***
 
-**版本**: v0.2.0
+**版本**: v0.2.3
 **最后更新**: 2026-06-12
 **兼容性**: Windows / Linux / macOS (Python 3.8+)
