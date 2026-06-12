@@ -1,0 +1,17 @@
+pyguitarpro>=0.11
+PyQt5>=5.15
+pyfluidsynth>=1.4.0
+
+[dev]
+pytest>=7.0
+pytest-cov>=4.0
+black>=23.0
+isort>=5.12
+mypy>=1.0
+build>=0.10
+twine>=4.0
+
+[full]
+pyguitarpro>=0.11
+PyQt5>=5.15
+pyfluidsynth>=1.4.0

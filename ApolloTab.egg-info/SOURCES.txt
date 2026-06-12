@@ -1,0 +1,15 @@
+LICENSE
+MANIFEST.in
+README.md
+pyproject.toml
+ApolloTab/__init__.py
+ApolloTab/player.py
+ApolloTab/py.typed
+ApolloTab.egg-info/PKG-INFO
+ApolloTab.egg-info/SOURCES.txt
+ApolloTab.egg-info/dependency_links.txt
+ApolloTab.egg-info/requires.txt
+ApolloTab.egg-info/top_level.txt
+examples/audio_playback.py
+examples/basic_parse.py
+examples/render_tab.py
