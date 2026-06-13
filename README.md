@@ -394,7 +394,7 @@ twine upload dist/*
 
 | Package                                                    | Version | Purpose                   | License  |
 | ---------------------------------------------------------- | ------- | ------------------------- | -------- |
-| [pyguitarpro](https://github.com/ozono/guitarpro)          | >=0.11  | Guitar Pro file parsing   | LGPL-2.1 |
+| [pyguitarpro](https://github.com/ozono/guitarpro)          | >=0.11  | Guitar Pro file parsing   | LGPL-3.0 |
 | [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) | >=5.15  | GUI rendering framework   | GPL v3   |
 | [pyfluidsynth](https://github.com/nwhitehead/pyfluidsynth) | >=1.4.0 | FluidSynth Python binding | LGPL-2.1 |
 
@@ -420,7 +420,7 @@ Issues and Pull Requests are welcome!
 
 ## Related Projects
 
-- **[TAB Score Viewer](https://github.com/your-repo/tab-score-viewer)** - Complete guitar tab viewer app built on ApolloTab
+- **[TAB Score Viewer](https://github.com/Zhuwenqian/tab-score-viewer)** - Complete guitar tab viewer app built on ApolloTab
 - **[pyguitarpro](https://github.com/ozono/guitarpro)** - Underlying library for Guitar Pro file parsing
 - **[FluidSynth](https://github.com/FluidSynth/fluidsynth)** - Real-time MIDI synthesis engine
 
@@ -859,7 +859,7 @@ twine upload dist/*
 
 | 包名                                                         | 版本      | 用途                  | 许可证      |
 | ---------------------------------------------------------- | ------- | ------------------- | -------- |
-| [pyguitarpro](https://github.com/ozono/guitarpro)          | >=0.11  | Guitar Pro文件解析      | LGPL-2.1 |
+| [pyguitarpro](https://github.com/Perlence/PyGuitarPro)          | >=0.11  | Guitar Pro文件解析      | LGPL-3.0 |
 | [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) | >=5.15  | GUI渲染框架             | GPL v3   |
 | [pyfluidsynth](https://github.com/nwhitehead/pyfluidsynth) | >=1.4.0 | FluidSynth Python绑定 | LGPL-2.1 |
 
@@ -885,8 +885,8 @@ twine upload dist/*
 
 ## 相关项目
 
-- **[TAB Score Viewer](https://github.com/your-repo/tab-score-viewer)** - 基于 ApolloTab 的完整吉他谱查看器应用
-- **[pyguitarpro](https://github.com/ozono/guitarpro)** - Guitar Pro 文件解析底层库
+- **[TAB Score Viewer](https://github.com/Zhuwenqian/tab-score-viewer)** - 基于 ApolloTab 的完整吉他谱查看器应用
+- **[pyguitarpro](https://github.com/Perlence/PyGuitarPro)** - Guitar Pro 文件解析底层库
 - **[FluidSynth](https://github.com/FluidSynth/fluidsynth)** - 实时 MIDI 合成引擎
 
 ***
