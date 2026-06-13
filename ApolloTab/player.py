@@ -54,7 +54,7 @@
   - PyQt5 (QPixmap, 用于图像渲染)
 
 创建日期: 2026-06-12
-最后更新: 2026-06-12 (v0.2.0 - Phase 4 库化重构)
+最后更新: 2026-06-13 (v0.3.7: 新增 set_theme/current_theme_name/get_available_themes 主题管理接口)
 ============================================================
 """
 
@@ -379,6 +379,96 @@ class GTPPlayer:
             包含每页/行/小节/拍的精确坐标信息
         """
         return getattr(self._renderer, 'last_layouts', [])
+    
+    # ================================================================
+    # 主题管理
+    # ================================================================
+    
+    def set_theme(self, theme) -> None:
+        """
+        切换渲染主题（委托给内部渲染器）
+        
+        功能:
+          动态切换六线谱的配色方案，无需重新创建播放器实例。
+          切换后需要重新调用 render_track() 才能生成使用新主题的图像。
+        
+        参数:
+            theme: 可以是以下两种形式之一:
+              1. 字符串: 预设主题名称 ("light" | "dark")
+              2. ThemeConfig 实例: 自定义或预定义的主题对象
+              
+        使用示例:
+            # 方式1: 通过名称字符串切换（推荐）
+            player.set_theme("light")   # 黑白主题（适合打印/白天）
+            player.set_theme("dark")    # 深色主题（适合夜间/护眼）
+            
+            # 方式2: 通过 ThemeConfig 实例切换
+            from ApolloTab.utils.constants import ThemeConfig
+            my_theme = ThemeConfig.get_theme("light")
+            player.set_theme(my_theme)
+            
+            # 方式3: 自定义主题
+            custom = ThemeConfig(
+                colors={
+                    "COLOR_BG": "#FFFDE7",      # 米黄色背景
+                    "COLOR_TEXT": "#212121",     # 近黑色文字
+                },
+                theme_name="sepia"
+            )
+            player.set_theme(custom)
+        
+        注意:
+          - 此方法仅修改配置，不会自动重新渲染已有图像
+          - 调用后需重新执行 render_track() 才能看到效果
+          - 内部会同步更新布局引擎的主题（确保一致性）
+          
+        异常:
+          ValueError: 当传入未知的主题名称时抛出（由 TabRenderer.set_theme 抛出）
+          TypeError: 当 theme 参数类型不支持时抛出（由 TabRenderer.set_theme 抛出）
+          
+        性能:
+          切换主题是 O(1) 操作（仅替换引用），
+          不会触发任何计算或 I/O 操作。
+          
+        设计模式:
+          委托模式(Delegate): 将主题设置请求转发给内部的 TabRenderer 实例处理，
+          符合门面模式(Facade)的设计原则，对外提供统一简化的接口。
+        """
+        # 委托给内部渲染器的 set_theme 方法
+        self._renderer.set_theme(theme)
+    
+    @property
+    def current_theme_name(self) -> str:
+        """
+        获取当前主题名称
+        
+        返回:
+            当前使用的主题标识字符串，如 "light", "dark", "custom" 等
+            
+        使用示例:
+            >>> player = GTPPlayer()
+            >>> print(f"当前主题: {player.current_theme_name}")
+            当前主题: dark
+        """
+        return self._renderer.current_theme_name
+    
+    def get_available_themes(self) -> List[str]:
+        """
+        获取所有可用的预设主题名称列表
+        
+        返回:
+            主题名称列表，如 ["light", "dark"]
+            
+        使用示例:
+            >>> themes = player.get_available_themes()
+            >>> print(f"可用主题: {themes}")
+            可用主题: ['light', 'dark']
+            
+            # 遍历所有主题
+            for theme_name in player.get_available_themes():
+                print(theme_name)
+        """
+        return self._renderer.get_available_themes()
     
     # ================================================================
     # 音频引擎管理
