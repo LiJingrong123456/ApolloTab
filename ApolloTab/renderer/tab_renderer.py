@@ -64,10 +64,24 @@ class TabRenderer:
     
     功能: 将解析后的GTP乐谱数据渲染为可视化的六线谱图像
     
+    主题支持（v0.2.4新增）:
+      - 内置黑白(light)和深色(dark)两套预设主题
+      - 支持运行时动态切换主题
+      - 支持自定义扩展新主题
+    
     用法:
         renderer = TabRenderer()
         pixmaps = renderer.render(song, track_index=0)
         # pixmaps: List[QPixmap] - 每页一张图片
+        
+        # 切换到黑白主题
+        renderer.set_theme("light")
+        pixmaps_light = renderer.render(song, track_index=0)
+        
+        # 或使用自定义配置
+        from ApolloTab.utils.constants import ThemeConfig
+        custom_theme = ThemeConfig(colors={"COLOR_BG": "#FFFFCC", ...})
+        renderer.set_theme(custom_theme)
     """
 
     def __init__(self, config: Optional[RenderConfig] = None):
@@ -76,6 +90,113 @@ class TabRenderer:
         # 上次渲染的布局数据(由render()自动填充)
         # 类型: List[PageLayout], 每页包含SystemLayout→MeasureLayout→BeatLayout坐标
         self.last_layouts: list = []
+    
+    def set_theme(self, theme) -> None:
+        """
+        切换渲染主题（核心接口）
+        
+        功能:
+          动态切换六线谱的配色方案，无需重新创建渲染器实例。
+          切换后需要重新调用 render() 才能生成使用新主题的图像。
+        
+        参数:
+            theme: 可以是以下三种形式之一:
+              1. 字符串: 预设主题名称 ("light" | "dark")
+              2. ThemeConfig 实例: 自定义或预定义的主题对象
+              
+        使用示例:
+            # 方式1: 通过名称字符串切换（推荐）
+            renderer.set_theme("light")   # 黑白主题
+            renderer.set_theme("dark")    # 深色主题
+            
+            # 方式2: 通过 ThemeConfig 实例切换
+            from ApolloTab.utils.constants import ThemeConfig
+            my_theme = ThemeConfig.get_theme("light")
+            renderer.set_theme(my_theme)
+            
+            # 方式3: 自定义主题
+            custom = ThemeConfig(
+                colors={
+                    "COLOR_BG": "#FFFDE7",      # 米黄色背景
+                    "COLOR_TEXT": "#212121",     # 近黑色文字
+                    # ... 其他颜色参数
+                },
+                theme_name="sepia"
+            )
+            renderer.set_theme(custom)
+        
+        注意:
+          - 此方法仅修改配置，不会自动重新渲染已有图像
+          - 调用后需重新执行 render() 才能看到效果
+          - 布局引擎会同步更新主题（确保一致性）
+          
+        异常:
+          ValueError: 当传入未知的主题名称时抛出
+          TypeError: 当 theme 参数类型不支持时抛出
+          
+        性能:
+          切换主题是 O(1) 操作（仅替换引用），
+          不会触发任何计算或 I/O 操作。
+        """
+        # 导入 ThemeConfig（延迟导入避免循环依赖）
+        from ..utils.constants import ThemeConfig
+        
+        # === 根据 input 类型处理 ===
+        if isinstance(theme, str):
+            # 字符串：从预设主题中获取
+            new_theme = ThemeConfig.get_theme(theme)
+            
+        elif isinstance(theme, ThemeConfig):
+            # ThemeConfig 实例：直接使用
+            new_theme = theme
+            
+        else:
+            raise TypeError(
+                f"不支持的 theme 类型: {type(theme).__name__}\n"
+                f"支持的类型:\n"
+                f"  1. str: 预设主题名称 (可用: {', '.join(ThemeConfig.list_themes())})\n"
+                f"  2. ThemeConfig: 主题配置实例\n\n"
+                f"示例:\n"
+                f"  renderer.set_theme('light')\n"
+                f"  renderer.set_theme(ThemeConfig.get_theme('dark'))"
+            )
+        
+        # === 应用新主题到配置 ===
+        self.cfg.theme = new_theme
+        
+        # === 同步更新布局引擎的主题（保持一致性）===
+        # 重要：布局引擎可能缓存了部分颜色相关参数，
+        # 这里通过重新创建确保完全同步
+        self._layout_engine.cfg.theme = new_theme
+        
+        # 可选：打印日志（调试用，生产环境可注释掉）
+        print(f"[TabRenderer] [OK] 主题已切换: {new_theme.name} "
+              f"(背景={new_theme.COLOR_BG}, 文字={new_theme.COLOR_TEXT})")
+    
+    @property
+    def current_theme_name(self) -> str:
+        """
+        获取当前主题名称
+        
+        返回:
+            当前使用的主题标识字符串，如 "light", "dark", "custom" 等
+        """
+        return self.cfg.theme.name
+    
+    def get_available_themes(self) -> List[str]:
+        """
+        获取所有可用的预设主题名称列表
+        
+        返回:
+            主题名称列表，如 ["light", "dark"]
+            
+        使用示例:
+            >>> themes = renderer.get_available_themes()
+            >>> print(f"可用主题: {themes}")
+            可用主题: ['light', 'dark']
+        """
+        from ..utils.constants import ThemeConfig
+        return ThemeConfig.list_themes()
 
     def render(self, song: GTPSong, track_index: int = 0,
                page_width: int = None, page_height: int = None) -> List[QPixmap]:

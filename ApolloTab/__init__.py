@@ -55,7 +55,8 @@ from .audio import MidiConverter, MidiEvent, SynthEngine
 from .player import GTPPlayer, create_gtp_player, render_gtp_to_images
 from .utils import (
     StandardTunings, NoteDuration, TechniqueType,
-    RenderConfig, TECHNIQUE_ABBREVIATION, get_string_name
+    RenderConfig, ThemeConfig,  # v0.2.4新增: 渲染主题配置
+    TECHNIQUE_ABBREVIATION, get_string_name
 )
 
 __version__ = "0.2.0"
@@ -75,5 +76,6 @@ __all__ = [
     'MidiConverter', 'MidiEvent', 'SynthEngine',
     # 工具
     'StandardTunings', 'NoteDuration', 'TechniqueType',
-    'RenderConfig', 'TECHNIQUE_ABBREVIATION', 'get_string_name',
+    'RenderConfig', 'ThemeConfig',  # v0.2.4新增: 渲染主题配置
+    'TECHNIQUE_ABBREVIATION', 'get_string_name',
 ]
