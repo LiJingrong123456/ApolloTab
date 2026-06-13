@@ -33,7 +33,7 @@
   - 内部依赖: gtp_engine.models.*, layout_engine.*, utils.constants
 
 创建日期: 2026-06-06
-最后更新: 2026-06-13 (v0.2.6: 颜色访问改用theme对象; 新增set_theme()主题切换接口)
+最后更新: 2026-06-13 (v0.2.8: 标题右侧新增调号拍号显示 1=X (A/B))
 ============================================================
 """
 
@@ -295,17 +295,28 @@ class TabRenderer:
 
     def _draw_header(self, painter: QPainter, song: GTPSong,
                      track: GTPTrack, page_width: int) -> None:
-        """绘制页面顶部信息区（标题、轨道名、调弦、BPM）"""
+        """绘制页面顶部信息区（标题、轨道名、调弦、BPM、调号拍号）"""
         y = 15
-        
-        # 歌曲标题
+
+        # 歌曲标题 + 右侧调号拍号
         painter.setPen(QColor(self.cfg.theme.COLOR_TEXT))
         title_font = QFont(self.cfg.NOTE_FONT_FAMILY, self.cfg.TRACK_NAME_FONT_SIZE, QFont.Bold)
         painter.setFont(title_font)
         title_text = song.title or "Untitled"
         if len(title_text) > 50:
             title_text = title_text[:47] + "..."
-        painter.drawText(QRect(10, y, page_width - 20, 25), Qt.AlignLeft, title_text)
+
+        # 标题左侧绘制
+        painter.drawText(QRect(10, y, page_width - 200, 25), Qt.AlignLeft, title_text)
+
+        # 调号拍号绘制在标题右侧: 格式为 "1=C (4/4)"
+        kt_str = self._format_key_time_signature(song)
+        if kt_str:
+            kt_font = QFont(self.cfg.NOTE_FONT_FAMILY, self.cfg.INFO_FONT_SIZE)
+            painter.setFont(kt_font)
+            painter.setPen(QColor("#888888"))
+            painter.drawText(QRect(page_width - 180, y, 170, 25), Qt.AlignRight | Qt.AlignVCenter, kt_str)
+
         y += 26
         
         # 第二行：轨道名 | 调弦(简化显示) | BPM
@@ -317,6 +328,68 @@ class TabRenderer:
         tuning_str = track.get_tuning_name()
         info_line = f"{track.name}  |  {tuning_str}  |  {song.tempo} BPM"
         painter.drawText(QRect(10, y, page_width - 20, 20), Qt.AlignLeft, info_line)
+
+    @staticmethod
+    def _format_key_time_signature(song: GTPSong) -> str:
+        """
+        格式化调号和拍号为 "1=X (A/B)" 字符串，用于标题右侧显示
+
+        原理:
+          - 调号(key_signature) 是 MIDI 音高值(0=C, 1=G, 2=D, ... -1=F, -2=Bb 等)
+            通过查表转换为调性名称
+          - 拍号(time_signature) 是 (分子, 分母) 元组，直接格式化为分数形式
+
+        参数:
+            song: GTPSong 对象（含 key_signature 和第一个小节的 time_signature）
+
+        返回:
+            格式化字符串，如 "1=C (4/4)"、"1=G (3/4)"、"1=Bb (6/8)"
+            无法获取时返回空字符串
+
+        示例（10条 case）:
+            key_val=0,  time_sig=(4,4) → "1=C (4/4)"
+            key_val=1,  time_sig=(4,4) → "1=G (4/4)"
+            key_val=-1, time_sig=(4,4) → "1=F (4/4)"
+            key_val=-2, time_sig=(3,4) → "1=Bb (3/4)"
+            key_val=5,  time_sig=(2,2) → "1=B (2/2)"
+            key_val=7,  time_sig=(4,4) → "1=C# (4/4)"
+            key_val=-7, time_sig=(4,4) → "1=Cb (4/4)"
+            key_val=2,  time_sig=(6,8) → "1=D (6/8)"
+            key_val=-4, time_sig=(4,4) → "1=Ab (4/4)"
+            key_val=3,  time_sig=(3,4) → "1=A (3/4)"
+        """
+        # 调号值→调性名称映射表（Circle of Fifths: 纯五度循环）
+        # key_val 为正数表示升号调（#），负数表示降号调（b）
+        KEY_NAMES = {
+            0: 'C',   1: 'G',   2: 'D',   3: 'A',   4: 'E',   5: 'B',
+            6: 'F#',  7: 'C#',  8: 'G#',  9: 'D#', 10: 'A#', 11: 'F##',
+            -1: 'F',  -2: 'Bb', -3: 'Eb', -4: 'Ab', -5: 'Db', -6: 'Gb',
+            -7: 'Cb', -8: 'Fb'
+        }
+
+        try:
+            # 提取调号值
+            key_sig = song.key_signature
+            if isinstance(key_sig, (list, tuple)):
+                key_val = key_sig[0] if len(key_sig) > 0 else 0
+            else:
+                key_val = int(key_sig) if key_sig is not None else 0
+
+            # 提取拍号（取第一个小节的拍号）
+            if song.tracks and song.tracks[0].measures:
+                ts = song.tracks[0].measures[0].time_signature
+                if isinstance(ts, (list, tuple)) and len(ts) >= 2:
+                    num, den = int(ts[0]), int(ts[1])
+                else:
+                    num, den = 4, 4  # 默认 4/4 拍
+            else:
+                num, den = 4, 4
+
+            key_name = KEY_NAMES.get(key_val, f'?{key_val}')
+            return f"1={key_name} ({num}/{den})"
+
+        except Exception:
+            return ""
 
     @staticmethod
     def _midi_to_note_name(midi: int) -> str:
