@@ -368,14 +368,17 @@ class TabRenderer:
         }
 
         try:
-            # 提取调号值
-            key_sig = song.key_signature
-            if isinstance(key_sig, (list, tuple)):
-                key_val = key_sig[0] if len(key_sig) > 0 else 0
+            # 提取调号值（GTPSong 字段名为 key，不是 key_signature）
+            key_val = getattr(song, 'key', None)
+            if key_val is None:
+                # 回退: 尝试 key_signature 属性
+                key_val = getattr(song, 'key_signature', 0)
+                if isinstance(key_val, (list, tuple)):
+                    key_val = key_val[0] if len(key_val) > 0 else 0
             else:
-                key_val = int(key_sig) if key_sig is not None else 0
+                key_val = int(key_val)
 
-            # 提取拍号（取第一个小节的拍号）
+            # 提取拍号（取第一个音轨第一个小节的拍号）
             if song.tracks and song.tracks[0].measures:
                 ts = song.tracks[0].measures[0].time_signature
                 if isinstance(ts, (list, tuple)) and len(ts) >= 2:
