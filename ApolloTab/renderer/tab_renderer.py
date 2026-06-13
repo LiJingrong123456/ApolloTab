@@ -165,13 +165,7 @@ class TabRenderer:
         self.cfg.theme = new_theme
         
         # === 同步更新布局引擎的主题（保持一致性）===
-        # 重要：布局引擎可能缓存了部分颜色相关参数，
-        # 这里通过重新创建确保完全同步
         self._layout_engine.cfg.theme = new_theme
-        
-        # 可选：打印日志（调试用，生产环境可注释掉）
-        print(f"[TabRenderer] [OK] 主题已切换: {new_theme.name} "
-              f"(背景={new_theme.COLOR_BG}, 文字={new_theme.COLOR_TEXT})")
     
     @property
     def current_theme_name(self) -> str:
@@ -261,7 +255,7 @@ class TabRenderer:
                      page: PageLayout, width: int, height: int) -> QPixmap:
         """渲染单页乐谱图像"""
         pixmap = QPixmap(width, height)
-        pixmap.fill(QColor(self.cfg.COLOR_BG))
+        pixmap.fill(QColor(self.cfg.theme.COLOR_BG))
         
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing, True)
@@ -305,7 +299,7 @@ class TabRenderer:
         y = 15
         
         # 歌曲标题
-        painter.setPen(QColor(self.cfg.COLOR_TEXT))
+        painter.setPen(QColor(self.cfg.theme.COLOR_TEXT))
         title_font = QFont(self.cfg.NOTE_FONT_FAMILY, self.cfg.TRACK_NAME_FONT_SIZE, QFont.Bold)
         painter.setFont(title_font)
         title_text = song.title or "Untitled"
@@ -317,7 +311,7 @@ class TabRenderer:
         # 第二行：轨道名 | 调弦(简化显示) | BPM
         info_font = QFont(self.cfg.NOTE_FONT_FAMILY, self.cfg.INFO_FONT_SIZE)
         painter.setFont(info_font)
-        painter.setPen(QColor(self.cfg.COLOR_TRACK_NAME))
+        painter.setPen(QColor(self.cfg.theme.COLOR_TRACK_NAME))
         
         # 使用简化调弦名称（标准/降半调/Drop D等），不再显示原始MIDI音高
         tuning_str = track.get_tuning_name()
@@ -399,7 +393,7 @@ class TabRenderer:
         y_mid = (y_top + y_bot) // 2
         
         # ===== 1. "T A B" 竖排文字（最左侧）=====
-        painter.setPen(QColor(self.cfg.COLOR_TEXT))
+        painter.setPen(QColor(self.cfg.theme.COLOR_TEXT))
         font = QFont(self.cfg.NOTE_FONT_FAMILY, 8, QFont.Bold)
         painter.setFont(font)
         fm = QFontMetrics(font)
@@ -413,7 +407,7 @@ class TabRenderer:
             painter.drawText(QPoint(tab_x - tw // 2, int(ly)), letter)
         
         # ===== 2. 谱号竖线（类似高音谱号的简化表示）=====
-        pen = QPen(QColor(self.cfg.COLOR_TEXT), 1.5)
+        pen = QPen(QColor(self.cfg.theme.COLOR_TEXT), 1.5)
         painter.setPen(pen)
         
         # 根据实际弦数动态计算谱号线位置
@@ -477,7 +471,7 @@ class TabRenderer:
             painter.drawText(QPoint(ts_x - kw // 2, int(y_top) - 4), key_text)
         
         # ===== 5. 右侧分隔线（双细线，类似GP的小节线风格）=====
-        pen_div = QPen(QColor(self.cfg.COLOR_BARLINE), 1)
+        pen_div = QPen(QColor(self.cfg.theme.COLOR_BARLINE), 1)
         painter.setPen(pen_div)
         painter.drawLine(divider_x, y_top - 2, divider_x, y_bot + 2)
         painter.drawLine(divider_x + 3, y_top - 2, divider_x + 3, y_bot + 2)
@@ -499,7 +493,7 @@ class TabRenderer:
           - 6弦(标准吉他, 默认)
           - 7弦(7弦吉他)
         """
-        pen = QPen(QColor(self.cfg.COLOR_TAB_LINE), self.cfg.TAB_LINE_THICKNESS)
+        pen = QPen(QColor(self.cfg.theme.COLOR_TAB_LINE), self.cfg.TAB_LINE_THICKNESS)
         painter.setPen(pen)
         
         x_start = self.cfg.PAGE_MARGIN_LEFT - 5
@@ -549,14 +543,14 @@ class TabRenderer:
             self._draw_repeat_dots(painter, m_layout.x_end + 2,
                                    system.y_tab_top, system.y_tab_bottom, side='right')
             # 重复次数标记
-            painter.setPen(QColor(self.cfg.COLOR_REPEAT))
+            painter.setPen(QColor(self.cfg.theme.COLOR_REPEAT))
             painter.setFont(QFont(self.cfg.NOTE_FONT_FAMILY, 8))
             painter.drawText(int(m_layout.x_end + 8), int(system.y_tab_bottom + 14),
                            str(measure.repeat_close))
         
         # 3. 绘制段落标记
         if measure.marker:
-            painter.setPen(QColor(self.cfg.COLOR_TECHNIQUE))
+            painter.setPen(QColor(self.cfg.theme.COLOR_TECHNIQUE))
             painter.setFont(QFont(self.cfg.NOTE_FONT_FAMILY, 9, QFont.Bold))
             painter.drawText(int(m_layout.x_start), int(system.y_tab_top - 8),
                            measure.marker)
@@ -572,7 +566,7 @@ class TabRenderer:
                       y_bottom: int, is_open: bool = False, 
                       is_double: bool = False) -> None:
         """绘制小节线"""
-        pen = QPen(QColor(self.cfg.COLOR_BARLINE), self.cfg.BARLINE_THICKNESS)
+        pen = QPen(QColor(self.cfg.theme.COLOR_BARLINE), self.cfg.BARLINE_THICKNESS)
         painter.setPen(pen)
         painter.drawLine(x, y_top, x, y_bottom)
         
@@ -581,7 +575,7 @@ class TabRenderer:
         
         if is_open:
             # 反复起始加粗线
-            thick_pen = QPen(QColor(self.cfg.COLOR_BARLINE), 3)
+            thick_pen = QPen(QColor(self.cfg.theme.COLOR_BARLINE), 3)
             painter.setPen(thick_pen)
             painter.drawLine(x + 4, y_top, x + 4, y_bottom)
 
@@ -589,7 +583,7 @@ class TabRenderer:
                           y_top: int, y_bottom: int, 
                           side: str = 'left') -> None:
         """绘制反复记号的两个点"""
-        painter.setPen(QPen(QColor(self.cfg.COLOR_BARLINE), 3))
+        painter.setPen(QPen(QColor(self.cfg.theme.COLOR_BARLINE), 3))
         dot_y1 = y_top + (y_bottom - y_top) // 3
         dot_y2 = y_bottom - (y_bottom - y_top) // 3
         offset = 6 if side == 'right' else -8
@@ -690,7 +684,7 @@ class TabRenderer:
         if note.is_ghost:
             painter.setPen(QColor("#666666"))
         else:
-            painter.setPen(QColor(self.cfg.COLOR_TEXT))
+            painter.setPen(QColor(self.cfg.theme.COLOR_TEXT))
         
         # 获取显示文本
         display_text = note.get_display_fret()
@@ -773,7 +767,7 @@ class TabRenderer:
             cx:      品格数字中心X坐标
             y_base:  弦线Y坐标
         """
-        painter.setPen(QPen(QColor(self.cfg.COLOR_TECHNIQUE), 1))
+        painter.setPen(QPen(QColor(self.cfg.theme.COLOR_TECHNIQUE), 1))
         # 菱形大小：约等于品格数字的大小
         size = 8  # 菱形半宽(px)，调整效果: 越大菱形越明显
         # 画菱形: 上→右→下→左→上
@@ -832,7 +826,7 @@ class TabRenderer:
             return  # 没找到目标音符，不画连线
         
         # 设置滑线样式
-        pen = QPen(QColor(self.cfg.COLOR_TECHNIQUE), 1)
+        pen = QPen(QColor(self.cfg.theme.COLOR_TECHNIQUE), 1)
         painter.setPen(pen)
         
         # 计算终点Y坐标（目标音符所在弦线）
@@ -909,7 +903,7 @@ class TabRenderer:
         if target_cx is None:
             return  # 没有目标音符，不画弧线
         
-        pen = QPen(QColor(self.cfg.COLOR_TECHNIQUE), 1.0)
+        pen = QPen(QColor(self.cfg.theme.COLOR_TECHNIQUE), 1.0)
         painter.setPen(pen)
         
         # === 绘制向上凸的圆弧（类似符尾连线）===
@@ -972,7 +966,7 @@ class TabRenderer:
             self._draw_bend_simple(painter, cx, y_base, system)
             return
         
-        pen = QPen(QColor(self.cfg.COLOR_TECHNIQUE), 1.5)
+        pen = QPen(QColor(self.cfg.theme.COLOR_TECHNIQUE), 1.5)
         painter.setPen(pen)
         
         # === 布局参数 ===
@@ -1059,7 +1053,7 @@ class TabRenderer:
         简单推弦渲染（无详细数据时的后备方案）
         仅画一个基础弧线箭头，不显示度数文字
         """
-        pen = QPen(QColor(self.cfg.COLOR_TECHNIQUE), 1.5)
+        pen = QPen(QColor(self.cfg.theme.COLOR_TECHNIQUE), 1.5)
         painter.setPen(pen)
         
         arc_start_x = cx - 4
@@ -1096,7 +1090,7 @@ class TabRenderer:
             y_base:  弦线Y坐标
             system:  系统布局
         """
-        pen = QPen(QColor(self.cfg.COLOR_TECHNIQUE), 1)
+        pen = QPen(QColor(self.cfg.theme.COLOR_TECHNIQUE), 1)
         painter.setPen(pen)
         
         # 波浪线参数
@@ -1154,7 +1148,7 @@ class TabRenderer:
             TechniqueType.TAPPED_HARMONIC, TechniqueType.PINCH_HARMONIC,
         }
         
-        painter.setPen(QColor(self.cfg.COLOR_TECHNIQUE))
+        painter.setPen(QColor(self.cfg.theme.COLOR_TECHNIQUE))
         font = QFont(self.cfg.NOTE_FONT_FAMILY, 8)
         painter.setFont(font)
         
@@ -1226,7 +1220,7 @@ class TabRenderer:
         
         # 定义每种技巧的标签和颜色
         tech_config = [
-            (TechniqueType.PALM_MUTE, "P.M.", QColor(self.cfg.COLOR_TECHNIQUE), False),
+            (TechniqueType.PALM_MUTE, "P.M.", QColor(self.cfg.theme.COLOR_TECHNIQUE), False),
             (TechniqueType.LET_RING, "let ring", QColor("#60A5FA"), True),
             (TechniqueType.NATURAL_HARMONIC, "N.H.", QColor("#F59E0B"), False),
             (TechniqueType.ARTIFICIAL_HARMONIC, "A.H.", QColor("#F59E0B"), False),
@@ -1278,7 +1272,7 @@ class TabRenderer:
         
         # 为P.M.画虚线（基于拍的时值宽度）
         self._draw_dashed_extension_line(
-            painter, pm_beats, system, "P.M.", QColor(self.cfg.COLOR_TECHNIQUE)
+            painter, pm_beats, system, "P.M.", QColor(self.cfg.theme.COLOR_TECHNIQUE)
         )
         
         # 为Let Ring画虚线（GP5格式：小写 + 跨拍连线，更严格断开）
@@ -1420,7 +1414,7 @@ class TabRenderer:
             stem_tip_y = stem_base_y + self.cfg.STEM_HEIGHT
         
         # 绘制符干线
-        pen = QPen(QColor(self.cfg.COLOR_STEM), self.cfg.STEM_THICKNESS)
+        pen = QPen(QColor(self.cfg.theme.COLOR_STEM), self.cfg.STEM_THICKNESS)
         painter.setPen(pen)
         painter.drawLine(b_layout.x_center, stem_base_y,
                         b_layout.x_center, stem_tip_y)
@@ -1457,7 +1451,7 @@ class TabRenderer:
         if dur_val >= NoteDuration.THIRTY_SECOND.value:
             flag_count += 1
         
-        pen = QPen(QColor(self.cfg.COLOR_BEAM), 1.5)  # 加粗使符尾更清晰
+        pen = QPen(QColor(self.cfg.theme.COLOR_BEAM), 1.5)  # 加粗使符尾更清晰
         painter.setPen(pen)
         
         beam_h = self.cfg.BEAM_HEIGHT
@@ -1478,8 +1472,8 @@ class TabRenderer:
         if beat.is_dotted:
             dot_cx = cx + flag_len + 4  # 附点在符尾右侧
             dot_cy = stem_tip_y  # 与符干末端对齐
-            painter.setPen(QPen(QColor(self.cfg.COLOR_BEAM), 1.5))
-            painter.setBrush(QColor(self.cfg.COLOR_BEAM))
+            painter.setPen(QPen(QColor(self.cfg.theme.COLOR_BEAM), 1.5))
+            painter.setBrush(QColor(self.cfg.theme.COLOR_BEAM))
             painter.drawEllipse(dot_cx, dot_cy - 2, 4, 4)
 
     def _draw_rest_symbol(self, painter: QPainter, beat,
@@ -1505,7 +1499,7 @@ class TabRenderer:
         y_top = system.y_tab_top
         y_bottom = system.y_tab_bottom
         
-        painter.setPen(QPen(QColor(self.cfg.COLOR_TEXT), 1.5))
+        painter.setPen(QPen(QColor(self.cfg.theme.COLOR_TEXT), 1.5))
         
         if dur_val == NoteDuration.WHOLE.value:
             # === 全休止符：悬挂式细线框 ===
@@ -1559,14 +1553,14 @@ class TabRenderer:
             if beat.is_dotted:
                 dot_x = cx + arc_r + 3
                 dot_y = y_center + 2
-                painter.setBrush(QColor(self.cfg.COLOR_TEXT))
+                painter.setBrush(QColor(self.cfg.theme.COLOR_TEXT))
                 painter.drawEllipse(dot_x, dot_y, 3, 3)
         
         # 附点（全音符和二分音符也支持附点）
         if beat.is_dotted and dur_val <= NoteDuration.HALF.value:
             dot_x = cx + 6
             dot_y = (y_top + y_bottom) // 2
-            painter.setBrush(QColor(self.cfg.COLOR_TEXT))
+            painter.setBrush(QColor(self.cfg.theme.COLOR_TEXT))
             painter.drawEllipse(dot_x, dot_y, 3, 3)
 
     # ============================================================

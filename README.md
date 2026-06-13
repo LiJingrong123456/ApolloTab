@@ -15,6 +15,7 @@
 - **Audio Playback**: Real-time MIDI synthesis engine based on FluidSynth with SoundFont support
 - **Technique Support**: 18 playing techniques (hammer-on, pull-off, bend, slide, harmonic, vibrato, etc.)
 - **Highly Configurable**: Fully adjustable rendering parameters (line width, spacing, colors, fonts, etc.)
+- **Theme Support**: Built-in light/dark color themes with custom theme extensibility
 
 ## Installation
 
@@ -262,11 +263,54 @@ engine.play()
 | Class / Constant  | Description                                        |
 | ----------------- | -------------------------------------------------- |
 | `RenderConfig`    | Rendering parameter configuration (all adjustable) |
+| `ThemeConfig`     | Rendering theme configuration (color schemes)      |
 | `TechniqueType`   | Technique type enum (18 types)                     |
 | `StandardTunings` | Standard tuning definitions                        |
 | `NoteDuration`    | Duration enum                                      |
 
 ## Configuration
+
+### ThemeConfig - Rendering Themes
+
+ApolloTab supports multiple built-in color themes for different use cases:
+
+```python
+from ApolloTab import TabRenderer, ThemeConfig
+
+# Get preset themes
+light_theme = ThemeConfig.get_theme("light")   # Black & white (print-friendly)
+dark_theme = ThemeConfig.get_theme("dark")    # Dark mode (eye-care)
+
+# List all available themes
+available = ThemeConfig.list_themes()  # ["light", "dark"]
+
+# Use theme with renderer
+renderer = TabRenderer()
+renderer.set_theme("light")           # Switch by name
+renderer.set_theme(dark_theme)        # Switch by instance
+
+# Or specify at initialization
+config = RenderConfig(theme=ThemeConfig.get_theme("light"))
+renderer = TabRenderer(config)
+
+# Custom theme (extendable)
+my_theme = ThemeConfig(
+    colors={
+        "COLOR_BG": "#FFFDE7",
+        "COLOR_TEXT": "#212121",
+        # ... other colors (optional, missing ones use dark theme defaults)
+    },
+    theme_name="sepia"
+)
+renderer.set_theme(my_theme)
+```
+
+**Built-in Themes:**
+
+| Theme Name | Background | Text Color | Use Case |
+| ---------- | ---------- | ---------- | -------- |
+| `light`    | `#FFFFFF` (white) | `#000000` (black) | Printing, daytime |
+| `dark`     | `#1E1E2E` (dark blue-gray) | `#E2E8F0` (light gray) | Night mode, eye-care |
 
 ### RenderConfig Parameters
 
@@ -379,15 +423,6 @@ isort ApolloTab/
 mypy ApolloTab/
 ```
 
-### Publish to PyPI
-
-```bash
-python -m build
-twine check dist/*
-twine upload --repository testpypi dist/*
-twine upload dist/*
-```
-
 ## Dependencies
 
 ### Required Dependencies
@@ -426,7 +461,7 @@ Issues and Pull Requests are welcome!
 
 ***
 
-**Version**: v0.2.4
+**Version**: v0.2.5
 **Last Updated**: 2026-06-12
 **Compatibility**: Windows / Linux / macOS (Python 3.8+)
 
@@ -451,6 +486,7 @@ Issues and Pull Requests are welcome!
 - **音频播放**: 基于 FluidSynth 的 MIDI 合成引擎，支持 SoundFont 音色库实时播放
 - **技巧支持**: 18种演奏技巧（击弦、勾弦、推弦、滑音、泛音、颤音等）
 - **高度可配置**: 渲染参数完全可调（线宽、间距、颜色、字体等）
+- **主题支持**: 内置黑白/深色配色方案，支持自定义主题扩展
 
 ## 安装
 
@@ -711,14 +747,57 @@ engine.play()
 
 #### 工具 (`ApolloTab.utils`)
 
-| 类/常量              | 说明           |
-| ----------------- | ------------ |
-| `RenderConfig`    | 渲染参数配置（全部可调） |
-| `TechniqueType`   | 技巧类型枚举（18种）  |
-| `StandardTunings` | 标准调弦定义       |
-| `NoteDuration`    | 时值枚举         |
+| 类/常量              | 说明                    |
+| ----------------- | -------------------- |
+| `RenderConfig`    | 渲染参数配置（全部可调）   |
+| `ThemeConfig`     | 渲染主题配置（配色方案）     |
+| `TechniqueType`   | 技巧类型枚举（18种）    |
+| `StandardTunings` | 标准调弦定义            |
+| `NoteDuration`    | 时值枚举              |
 
 ## 配置说明
+
+### ThemeConfig - 渲染主题
+
+ApolloTab 支持多套内置配色方案，适用于不同使用场景：
+
+```python
+from ApolloTab import TabRenderer, ThemeConfig
+
+# 获取预设主题
+light_theme = ThemeConfig.get_theme("light")   # 黑白配色（适合打印）
+dark_theme = ThemeConfig.get_theme("dark")    # 深色配色（护眼模式）
+
+# 列出所有可用主题
+available = ThemeConfig.list_themes()  # ["light", "dark"]
+
+# 使用主题
+renderer = TabRenderer()
+renderer.set_theme("light")           # 通过名称切换
+renderer.set_theme(dark_theme)        # 通过实例切换
+
+# 或在初始化时指定
+config = RenderConfig(theme=ThemeConfig.get_theme("light"))
+renderer = TabRenderer(config)
+
+# 自定义主题（可扩展）
+my_theme = ThemeConfig(
+    colors={
+        "COLOR_BG": "#FFFDE7",       # 米黄色背景
+        "COLOR_TEXT": "#212121",     # 近黑色文字
+        # ... 其他颜色参数（可选，缺失的使用深色主题默认值）
+    },
+    theme_name="sepia"               # 自定义名称
+)
+renderer.set_theme(my_theme)
+```
+
+**内置主题:**
+
+| 主题名称 | 背景色 | 文字色 | 适用场景 |
+| ------ | ------ | ------ | ------ |
+| `light` | `#FFFFFF` (纯白) | `#000000` (黑色) | 打印输出、白天使用 |
+| `dark` | `#1E1E2E` (深蓝灰) | `#E2E8F0` (亮白灰) | 夜间模式、护眼 |
 
 ### RenderConfig 渲染参数
 
@@ -837,22 +916,6 @@ isort ApolloTab/
 mypy ApolloTab/
 ```
 
-### 发布到 PyPI
-
-```bash
-# 1. 构建分发包
-python -m build
-
-# 2. 检查包内容
-twine check dist/*
-
-# 3. 发布到 TestPyPI（测试）
-twine upload --repository testpypi dist/*
-
-# 4. 发布到正式 PyPI
-twine upload dist/*
-```
-
 ## 依赖项
 
 ### 必需依赖
@@ -891,6 +954,6 @@ twine upload dist/*
 
 ***
 
-**版本**: v0.2.4
+**版本**: v0.2.5
 **最后更新**: 2026-06-12
 **兼容性**: Windows / Linux / macOS (Python 3.8+)
