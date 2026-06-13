@@ -954,6 +954,6 @@ mypy ApolloTab/
 
 ***
 
-**版本**: v0.2.6
+**版本**: v0.2.7
 **最后更新**: 2026-06-12
 **兼容性**: Windows / Linux / macOS (Python 3.8+)

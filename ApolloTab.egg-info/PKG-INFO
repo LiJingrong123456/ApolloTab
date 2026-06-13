@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: ApolloTab
-Version: 0.2.6
+Version: 0.2.7
 Summary: Guitar Pro file parsing, rendering, and audio playback engine library
 Author: ZhuWenqian
 Maintainer: ZhuWenqian
@@ -998,6 +998,6 @@ mypy ApolloTab/
 
 ***
 
-**版本**: v0.2.6
+**版本**: v0.2.7
 **最后更新**: 2026-06-12
 **兼容性**: Windows / Linux / macOS (Python 3.8+)
