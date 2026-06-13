@@ -278,6 +278,7 @@ class SynthEngine:
         # 搜索DLL的候选目录（按优先级排序）
         _dll_dirs = [
             _root,                                    # 项目根目录
+            os.path.join(_root, "_internal"),          # PyInstaller打包后的_internal文件夹
             os.path.join(_root, "fluidsnyth", "bin"),  # FluidSynth Windows发行版(常见拼写)
             os.path.join(_root, "fluidsynth", "bin"),  # 正确拼写的发行版目录
             os.path.join(_root, "bin"),                # 通用bin目录

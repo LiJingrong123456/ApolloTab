@@ -171,7 +171,12 @@ class GTPPlayer:
     def is_audio_ready(self) -> bool:
         """音频引擎是否已初始化且可用"""
         return self._synth_engine is not None and self._synth_engine.is_initialized
-    
+
+    @property
+    def is_loaded(self) -> bool:
+        """是否已加载GTP文件(用于导出时判断是否有谱面内容)"""
+        return hasattr(self, '_song') and self._song is not None
+
     @property
     def is_playing(self) -> bool:
         """是否正在播放"""
