@@ -1,147 +1,197 @@
-# ApolloTab v0.3.8 - Release Notes
+# ApolloTab v0.3.9 - Release Notes
 
-**Release Date**: June 14, 2026  
-**Commit**: `01f7db3839cabb666df356183cf3be8d39ca5c51`  
+**Release Date**: June 14, 2026
+**Commit**: `057d8f4`
 **Author**: Zhu Wenqian
 
 ---
 
-## 🎉 Overview
+## Overview
 
-ApolloTab v0.3.8 introduces a major new feature for practice workflows: **built-in A/B loop playback with measure-based precision**, along with critical bug fixes for short-loop scenarios. This release focuses on enhancing the audio engine's looping capabilities by moving loop logic from the UI layer down into the audio thread itself.
+ApolloTab v0.3.9 focuses on fixing critical playhead timeline accuracy issues for songs containing empty/rest measures, and introduces a global unique measure identification system that enables precise cross-page measure lookup.
 
 ---
 
-## ✨ New Features
+## Bug Fixes
 
-### 🔁 Built-in A/B Region Loop Playback (Measure-Based)
+### Critical Fix: Empty Measure Click Positioning Inaccuracy
 
-**Problem Solved**: Previous implementations handled A/B looping at the UI layer, which introduced race conditions, required complex cooldown mechanisms, and suffered from timing inaccuracies during rapid seeks.
+**Issue**: When a Guitar Pro song contains empty measures (measures with only rests or no notes/beats), clicking on these areas in the UI would cause the playhead cursor to jump to an adjacent non-empty measure, resulting in significant positioning errors.
 
-**Solution**: The entire loop logic has been moved into the audio engine's internal playback thread (`SynthEngine._play_loop()`), providing seamless, race-condition-free looping.
+**Root Cause**: The `build_timeline()` method in `GTPPlayer` used `continue` to skip empty measures (where `m_layout.beats` is empty/falsy). This meant those measures had no corresponding timeline entries, so the binary search in click handlers would land on the nearest populated entry instead.
 
-#### New API Methods:
+**Fix Implemented** ([player.py:1246-1282](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1246-L1282)):
+
+```python
+# [v0.3.9] Empty measure placeholder generation:
+# Instead of skipping empty measures with 'continue',
+# generate a placeholder timeline entry with correct scroll_y and time_ms
+if not beats_in_measure:
+    n_measures_in_system = len(system.measures)
+    rel_pos = meas_idx / max(n_measures_in_system, 1)
+    sys_h_render = max(system.y_tab_bottom - system.y_tab_top, 1)
+
+    scroll_y = (
+        page_base_y
+        + (system.y_tab_top + rel_pos * sys_h_render) * page_scale_ratio
+    )
+
+    placeholder = {
+        'time_ms': current_time_ms,
+        'scroll_y': scroll_y,
+        # ... page/sys/meas indices ...
+        'beat_idx': -1,  # Marks this as an empty measure placeholder
+        # ... coordinate fields ...
+    }
+    self._playhead_timeline.append(placeholder)
+```
+
+**Impact**:
+- Clicks on empty/rest measures now position the playhead correctly
+- No more "jumping" to adjacent measures when clicking silent sections
+- Accurate A/B loop point placement even in rest-heavy passages
+
+### Fix: Sentinel Point Measure Index Inheritance
+
+**Issue**: The sentinel (end-of-timeline) entry had hardcoded `meas_idx=0`, which caused `_find_measure_at_time()` to return measure 0 when the B-loop-point was set at the end of the song.
+
+**Fix** ([player.py:1357](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1357)): Sentinel now inherits all measure indices from the last real timeline entry:
+
+```python
+sentinel = {
+    # ...
+    'sys_idx': last_entry.get('sys_idx', 0),
+    'meas_idx': last_entry.get('meas_idx', 0),
+    'global_meas_idx': last_entry.get('global_meas_idx', 0),  # New: global ID
+    'beat_idx': last_entry.get('beat_idx', 0),
+    # ...
+}
+```
+
+---
+
+## New Features
+
+### Global Unique Measure ID (`global_meas_idx`)
+
+**Problem**: The existing `meas_idx` was local to each system (row), meaning measure 0 could appear multiple times across different systems/pages. This made it impossible to uniquely identify a measure when implementing features like "click to jump to measure N" or cross-referencing between audio time and visual position.
+
+**Solution**: Introduced `global_meas_idx` - a monotonically increasing integer that increments once per processed measure, guaranteed unique across all systems and pages.
+
+**Implementation Details** ([player.py:1217](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1217), [player.py:1304](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1304), [player.py:1317](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1317)):
+
+1. Initialized as `global_meas_idx = 0` before page iteration
+2. Incremented after processing each measure (both empty and populated)
+3. Included in every timeline entry (real beats + placeholders + sentinel)
+
+### `find_measure_at_time()` Method
+
+**New API Method** ([player.py:1174-1206](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1174-L1206)):
 
 | Method | Description |
 |--------|-------------|
-| `set_loop_region(start_ms, end_ms)` | Set A/B loop boundaries in milliseconds (measure-aligned) |
-| `clear_loop_region()` | Disable looping and resume normal playback-to-end behavior |
+| `find_measure_at_time(time_ms=None, scroll_y=None)` | Find measure info at given time or scroll position |
 
-#### Key Technical Improvements:
+**Returns**:
+```python
+{
+    'global_meas_idx': int,   # Global unique measure ID
+    'meas_idx': int,          # Local index within system (for UI display)
+    'start_time_ms': float,   # Start time of this measure (ms)
+    'start_scroll_y': float,  # Start scroll Y position of this measure
+}
+```
 
-1. **Thread-Safe Looping**: The loop restart mechanism runs entirely within the audio thread, eliminating race conditions between UI updates and audio playback
-2. **Measure-Aligned Boundaries**: Loop points are based on measure start/end times (in milliseconds), ensuring musical accuracy
-3. **Automatic Silence & Reset**: When reaching point B, the engine automatically silences all active notes, resets the time baseline to point A, and restarts event traversal
-4. **Smart Event Skipping**: Events earlier than `loop_start_ms` are automatically skipped during replay, preventing double-triggering
-5. **Real-Time `current_time_ms`**: The UI can simply read `current_time_ms` property, which naturally oscillates within `[loop_start, loop_end]` range
-
-#### Usage Example:
+**Usage Example**:
 
 ```python
 from ApolloTab.player import GTPPlayer
 
 player = GTPPlayer()
-player.load("practice_song.gp5")
-player.init_audio()
+player.load("song.gp5")
 
-# Set loop region: measures 4-8 (times in ms)
-player.set_loop_region(5000.0, 12000.0)  # A=5000ms, B=12000ms
+# Build timeline first
+layouts = player.last_layouts  # or from renderer
+images = player.render_track(0)
+timeline = player.build_timeline(layouts, images, display_width=1200)
 
-player.play()  # Will loop between 5s-12s indefinitely
+# Find measure at specific time (e.g., user clicked at 5000ms)
+info = player.find_measure_at_time(time_ms=5000.0)
+print(f"Global measure: {info['global_meas_idx']}")
+print(f"Local measure: {info['meas_idx']}")
+print(f"Start time: {info['start_time_ms']}ms")
 
-# To stop looping:
-player.clear_loop_region()
+# Or find by scroll position
+info = player.find_measure_at_time(scroll_y=1500.0)
 ```
 
 ---
 
-## 🐛 Bug Fixes
+## Architecture Highlights
 
-### Critical Fix: Short Loop Seek Race Condition
+### Design Pattern: Timeline Index with Global Namespace
 
-**Issue**: In previous versions, when using very short loops (e.g., looping measures 0-2), the system would play the entire song (potentially 240+ seconds) before returning to point A. Users perceived this as "the loop isn't working."
+This release demonstrates the **Global Unique Identifier** pattern applied to timeline data structures:
 
-**Root Cause**: The loop restart check only occurred after traversing *all* MIDI events (`evt_idx >= num_events`). For short loops, this meant playing through the complete song before detecting that looping should occur.
+1. **Namespace Isolation**: Each measure gets a globally unique ID independent of its local system context
+2. **Bidirectional Lookup**: The `find_measure_at_time()` method uses `global_meas_idx` for backward scanning within the same measure boundary
+3. **Placeholder Strategy**: Empty measures are represented as first-class timeline citizens (not skipped), ensuring complete coverage of the musical score
 
-**Fix Implemented** ([synth_engine.py:857-866](file:///e:/Projects/ApolloTab/ApolloTab/audio/synth_engine.py#L857-L866)):
+### Data Flow
 
-```python
-# [v0.2.6] Enhanced A/B loop boundary check:
-# When event time >= loop_end, immediately trigger loop restart
-# instead of waiting for all events to finish
-if self._loop_enabled and self._loop_end_ms > 0:
-    if target_time_ms >= self._loop_end_ms:
-        # Reached point B! Trigger immediate loop restart
-        self.silence_all_notes()
-        # Reset time baseline to point A...
-        evt_idx = 0  # Restart from beginning
+```
+GTPSong → build_timeline() → List[dict] with global_meas_idx
+                                    ↓
+                    find_measure_at_time() → Measure info dict
+                                    ↓
+                    UI click handler → Precise measure定位
 ```
 
-**Impact**: 
-- ✅ Short loops now respond instantly when reaching point B
-- ✅ No more "ghost playback" of sections outside the loop region
-- ✅ Smooth, predictable behavior for practice scenarios
-
 ---
 
-## 📝 Documentation Updates
-
-### Updated File Headers
-
-- **[synth_engine.py:7](file:///e:/Projects/ApolloTab/ApolloTab/audio/synth_engine.py#L7)**: Added changelog entry for v0.2.6 A/B loop feature
-- **[README.md:957](file:///e:/Projects/ApolloTab/README.md#L957)**: Version bumped to v0.3.8, last updated date refreshed
-
-### Version Metadata
-
-- **[pyproject.toml:14](file:///e:/Projects/ApolloTab/pyproject.toml#L14)**: Package version updated from `0.3.7` → `0.3.8`
-
----
-
-## 📊 Changed Files Summary
+## Changed Files Summary
 
 | File | Changes | Lines |
 |------|---------|-------|
-| `ApolloTab/audio/synth_engine.py` | **Major**: New A/B loop API + internal loop logic + race condition fix | **+113 lines** |
-| `pyproject.toml` | Version bump 0.3.7 → 0.3.8 | +1 line |
-| `README.md` | Version info update | +2 lines |
-| `dist/` | Cleaned up old distribution packages (0.3.5, 0.3.6) | Removed |
+| `ApolloTab/player.py` | **Major**: find_measure_at_time() + empty measure placeholders + global_meas_idx + sentinel fix | **+269 lines** |
+| `pyproject.toml` | Version bump 0.3.8 → 0.3.9 | +1 line |
+| `README.md` | Version/date update | +2 lines |
+| `readme/功能更新.md` | v0.3.9 changelog entry | +27 lines |
+| `release notes.md` | This file | Rewritten |
+| `dist/` | v0.3.9 packages (wheel + source) | Replaced |
 
-**Total Net Change**: ~+116 lines of production code
-
----
-
-## 🏗️ Architecture Highlights
-
-### Design Pattern: Delegation + Thread Confinement
-
-This release demonstrates two key architectural principles:
-
-1. **Thread Confinement Pattern**: All mutable state related to looping (`_loop_enabled`, `_loop_start_ms`, `_loop_end_ms`) is confined to the audio thread with proper locking (`RLock`), preventing data races
-
-2. **Facade Simplification**: The `GTPPlayer` class (and eventually UI layer) doesn't need to implement any loop logic—it simply calls `set_loop_region()` and reads `current_time_ms`. The complexity is hidden within `SynthEngine`
-
-### Backward Compatibility
-
-✅ **Fully Backward Compatible**  
-- No breaking changes to existing APIs
-- New methods are additive only
-- Existing playback behavior unchanged when loop is not enabled
-- All existing tests should pass without modification
+**Total Net Change**: ~+299 lines of production code
 
 ---
 
-## 🚀 Performance Characteristics
+## Backward Compatibility
 
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Loop response latency | High (UI thread dependent) | **Zero** (audio thread native) | ∞ |
-| Race condition risk | Present (UI↔Audio sync) | **Eliminated** (single-thread logic) | 100% |
-| Short loop (<10s) accuracy | Poor (plays full song first) | **Precise** (instant restart) | Critical fix |
-| Memory overhead | +0 bytes (state only) | Minimal (3 floats + 1 bool) | Negligible |
+Fully Backward Compatible
+- All new fields (`global_meas_idx`) are additive only
+- Existing timeline entries retain all original keys
+- `find_measure_at_time()` is a new method, no existing APIs changed
+- Placeholder entries use `beat_idx: -1` to distinguish from real beat entries
 
 ---
 
-## 📦 Installation
+## Testing Recommendations
+
+To validate the v0.3.9 changes:
+
+1. **Empty Measure Test**: Load a song with rest-only measures, verify clicks on those areas position correctly
+2. **Global ID Uniqueness Test**: Verify `global_meas_idx` is strictly increasing with no duplicates across pages
+3. **find_measure_at_time Test**: Call with various `time_ms` values, verify returned measure matches expected location
+4. **Scroll Position Test**: Call with `scroll_y`, verify returned info corresponds to visual position
+5. **Sentinel Test**: Set B loop point at song end, verify it maps to last real measure (not measure 0)
+6. **Cross-Page Measure Test**: Verify measures spanning page boundaries have correct sequential global IDs
+7. **Mixed Content Test**: Song with alternating populated and empty measures, verify all are addressable
+8. **A/B Loop + Empty Measures Test**: Set loop region spanning empty measures, verify correct behavior
+9. **Timeline Completeness Test**: Verify total timeline entry count = sum of all measures (including empty ones)
+10. **Backward Compatibility Test**: Existing code using timeline entries without `global_meas_idx` still works
+
+---
+
+## Installation
 
 ```bash
 # Upgrade to latest version
@@ -154,45 +204,15 @@ pip install .
 ```
 
 **Requirements** (unchanged):
-- Python ≥ 3.8
-- pyguitarpro ≥ 0.11
-- PyQt5 ≥ 5.15
-- pyfluidsynth ≥ 1.4.0
+- Python >= 3.8
+- pyguitarpro >= 0.11
+- PyQt5 >= 5.15
+- pyfluidsynth >= 1.4.0
 
 ---
 
-## 🧪 Testing Recommendations
-
-To validate the new A/B loop functionality:
-
-1. **Basic Loop Test**: Set a 10-second loop region, verify it repeats seamlessly
-2. **Short Loop Test**: Loop a single measure (2-3 seconds), confirm instant restart at point B
-3. **Dynamic Switch Test**: Change loop region during playback, verify smooth transition
-4. **Clear Loop Test**: Call `clear_loop_region()`, confirm normal playback resumes
-5. **Seek + Loop Test**: Combine seeking with active loop, ensure no audio glitches
-6. **Pause/Resume + Loop Test**: Pause inside loop region, resume, confirm loop continues correctly
+**Full Changelog**: View Commit Diff (commit `057d8f4`)
 
 ---
 
-## 🔮 What's Next?
-
-The foundation laid in this release enables future enhancements:
-
-- **Visual Loop Indicators**: UI markers showing A/B points on the tablature display
-- **Loop Count Limits**: Optional parameter to loop N times then stop
-- **Tempo Adjustment in Loops**: Slow down loops for difficult passages (practice mode)
-- **Loop Presets**: Save/load common loop configurations per song
-
----
-
-## 👥 Contributing
-
-Found a bug or have a feature request? Please open an issue on [GitHub Issues](https://github.com/Zhuwenqian/ApolloTab/issues).
-
----
-
-**Full Changelog**: [View Commit Diff](https://github.com/Zhuwenqian/ApolloTab/commit/01f7db3839cabb666df356183cf3be8d39ca5c51)
-
----
-
-*End of Release Notes* 🎸
+*End of Release Notes*
