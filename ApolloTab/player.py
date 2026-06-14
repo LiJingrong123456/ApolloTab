@@ -54,7 +54,7 @@
   - PyQt5 (QPixmap, 用于图像渲染)
 
 创建日期: 2026-06-12
-最后更新: 2026-06-13 (v0.3.7: 新增 set_theme/current_theme_name/get_available_themes 主题管理接口)
+最后更新: 2026-06-14 (v0.3.8: 新增基于小节的A/B区域循环播放API)
 ============================================================
 """
 
@@ -719,6 +719,191 @@ class GTPPlayer:
         if self._synth_engine:
             self._synth_engine.seek(time_ms)
     
+    # ================================================================
+    # A/B区域循环（基于小节原子单位）
+    # ================================================================
+    
+    def set_loop_region(self, start_ms: float, end_ms: float) -> None:
+        """
+        设置A/B区域循环范围(毫秒时间)
+        
+        [v0.3.8] 将循环逻辑下沉到SynthEngine音频线程内部。
+        设置后音频引擎在播放到end_ms时自动回到start_ms继续循环，
+        UI层无需任何冷却/帧计数器/模拟时钟等复杂机制。
+        
+        参数:
+            start_ms: 循环起始时间(毫秒)
+            end_ms:   循环结束时间(毫秒)
+        """
+        if self._synth_engine:
+            self._synth_engine.set_loop_region(start_ms, end_ms)
+    
+    def set_loop_region_by_measure(self, start_measure_idx: int, 
+                                     end_measure_idx: int) -> bool:
+        """
+        基于小节索引设置A/B区域循环
+        
+        原理: 利用 build_timeline() 生成的 playhead_timeline 数据，
+              找到起始小节的第一个拍的时间作为loop_start_ms，
+              找到结束小节的最后一个拍的时间作为loop_end_ms。
+              这样每个小节就是一个"模块"，循环以完整的小节为单位进行。
+        
+        参数:
+            start_measure_idx: 起始小节索引(0-based)，对应A点所在小节
+            end_measure_idx:   结束小节索引(0-based)，对应B点所在小节
+            
+        返回:
+            True=设置成功, False=失败(无时间线数据或索引超出范围)
+            
+        示例:
+            >>> player.set_loop_region_by_measure(0, 3)  # 循环第1-4小节
+            >>> player.set_loop_region_by_measure(2, 2)  # 只循环第3小节
+        """
+        if not self._playhead_timeline or not self._synth_engine:
+            return False
+        
+        # 收集所有唯一的小节索引及其对应的拍条目
+        measure_entries = {}  # meas_idx -> [entries]
+        for entry in self._playhead_timeline:
+            m_idx = entry.get('meas_idx', -1)
+            if m_idx >= 0:
+                if m_idx not in measure_entries:
+                    measure_entries[m_idx] = []
+                measure_entries[m_idx].append(entry)
+        
+        if not measure_entries:
+            return False
+        
+        all_meas_indices = sorted(measure_entries.keys())
+        
+        # 边界检查
+        if start_measure_idx < 0:
+            start_measure_idx = all_meas_indices[0]
+        if end_measure_idx >= len(all_meas_indices):
+            end_measure_idx = all_meas_indices[-1]
+        
+        # 获取起始小节第一个拍的时间
+        start_entries = measure_entries.get(start_measure_idx, [])
+        if not start_entries:
+            return False
+        loop_start_ms = start_entries[0]['time_ms']
+        
+        # 获取结束小节最后一个拍的时间
+        end_entries = measure_entries.get(end_measure_idx, [])
+        if not end_entries:
+            return False
+        loop_end_ms = end_entries[-1]['time_ms']
+        
+        # 确保end > start(至少留1ms余量)
+        if loop_end_ms <= loop_start_ms:
+            loop_end_ms = loop_start_ms + 100  # 最少100ms的循环区间
+        
+        self._synth_engine.set_loop_region(loop_start_ms, loop_end_ms)
+        
+        print(f"[GTPPlayer] A/B循环设置: 小节[{start_measure_idx}-{end_measure_idx}] "
+              f"= 时间[{loop_start_ms:.0f}ms - {loop_end_ms:.0f}ms] "
+              f"(跨度{loop_end_ms - loop_start_ms:.0f}ms)")
+        return True
+    
+    def set_loop_region_by_position(self, start_pct: float, 
+                                      end_pct: float,
+                                      total_scroll_distance: float = 0,
+                                      display_height: int = 0) -> bool:
+        """
+        基于滚动位置百分比设置A/B区域循环(UI层调用入口)
+        
+        原理: 将UI层的百分比位置转换为小节索引，再基于小节设置循环。
+              这实现了用户要求的"每个小节作为一个模块"的设计：
+              - A点落在哪个小节，就从该小节开头开始播
+              - B点落在哪个小节，就在该小节末尾结束
+        
+        参数:
+            start_pct: 起始位置百分比(0-100)，对应进度条上的A点
+            end_pct:   结束位置百分比(0-100)，对应进度条上的B点
+            total_scroll_distance: 总滚动距离(像素)，用于pct→scroll_y→measure转换
+            display_height: 显示区域高度(像素)，用于居中修正
+            
+        返回:
+            True=设置成功, False=失败
+        """
+        if not self._playhead_timeline or not self._synth_engine:
+            return False
+        
+        # 方法1: 通过时间线索引找到对应的小节
+        total_dur = self._total_audio_duration_ms
+        if total_dur <= 0:
+            return False
+        
+        # 将百分比转换为目标时间(ms)
+        target_start_ms = total_dur * start_pct / 100.0
+        target_end_ms = total_dur * end_pct / 100.0
+        
+        # [调试] 打印查找参数(正式版可移除或改为DEBUG级别日志)
+        print(f"[GTPPlayer] 循环查找: pct[{start_pct:.1f}-{end_pct:.1f}] "
+              f"→ time[{target_start_ms:.0f}ms-{target_end_ms:.0f}ms] "
+              f"总时长={total_dur:.0f}ms, 时间线条目数={len(self._timeline_times)}")
+        
+        # 在时间线中查找对应的小节索引
+        start_meas_idx = self._find_measure_at_time(target_start_ms)
+        end_meas_idx = self._find_measure_at_time(target_end_ms)
+        
+        if start_meas_idx is None or end_meas_idx is None:
+            return False
+        
+        # 基于小节设置循环（自动对齐到小节边界）
+        return self.set_loop_region_by_measure(start_meas_idx, end_meas_idx)
+    
+    def _find_measure_at_time(self, time_ms: float) -> Optional[int]:
+        """
+        根据时间戳查找所在的小节索引(内部方法)
+        
+        在 playhead_timeline 中二分查找指定时间对应的小节编号。
+        
+        参数:
+            time_ms: 音频时间(毫秒)
+            
+        返回:
+            小节索引(int)，找不到返回None
+        """
+        if not self._timeline_times or not self._playhead_timeline:
+            print(f"[GTPPlayer] _find_measure_at_time: 时间线为空! "
+                  f"_timeline_times长度={len(self._timeline_times) if self._timeline_times else 0}, "
+                  f"_playhead_timeline长度={len(self._playhead_timeline) if self._playhead_timeline else 0}")
+            return None
+        
+        # 二分查找: 找到第一个 > time_ms 的位置，退一位就是 <= time_ms 的最大元素
+        idx = bisect.bisect_right(self._timeline_times, time_ms) - 1
+        
+        # 边界修正: idx < 0 说明 time_ms 比所有时间线点都早 → 返回第1个条目的小节
+        if idx < 0:
+            idx = 0
+        # 边界修正: idx >= len 说明 time_ms 超过所有时间线点 → 返回最后1个有效条目的小节
+        elif idx >= len(self._playhead_timeline):
+            idx = len(self._playhead_timeline) - 1
+        
+        meas_idx = self._playhead_timeline[idx].get('meas_idx')
+        found_time = self._playhead_timeline[idx].get('time_ms', 0)
+        
+        # [调试] 打印查找结果
+        print(f"[GTPPlayer] _find_measure_at_time({time_ms:.0f}ms): "
+              f"idx={idx}/{len(self._playhead_timeline)-1}, "
+              f"meas_idx={meas_idx}, 该条目time_ms={found_time:.0f}")
+        
+        return meas_idx
+    
+    def clear_loop_region(self) -> None:
+        """清除A/B区域循环设置"""
+        if self._synth_engine:
+            self._synth_engine.clear_loop_region()
+    
+    @property
+    def is_loop_enabled(self) -> bool:
+        """是否已启用A/B区域循环"""
+        if self._synth_engine:
+            with self._synth_engine._lock:
+                return self._synth_engine._loop_enabled
+        return False
+    
     def shutdown(self) -> None:
         """
         完全关闭音频引擎并释放所有资源
@@ -922,7 +1107,11 @@ class GTPPlayer:
                     'time_ms': last_time_ms + estimated_remaining_ms,
                     'scroll_y': float(total_content_h),
                     'page_idx': len(page_layouts) - 1,
-                    'sys_idx': 0, 'meas_idx': 0, 'beat_idx': 0,
+                    # [v0.3.8修复] 哨兵点继承最后1个真实条目的小节索引
+                    # 旧代码硬编码meas_idx=0，导致B点在谱子末尾时_find_measure_at_time返回0
+                    'sys_idx': last_entry.get('sys_idx', 0),
+                    'meas_idx': last_entry.get('meas_idx', 0),
+                    'beat_idx': last_entry.get('beat_idx', 0),
                     'x_center': 0, 'x_start': 0, 'x_end': 0,
                     'y_top': 0, 'y_bottom': 0,
                 }

@@ -6,6 +6,7 @@
          将 MIDI 事件序列通过 FluidSynth 合成器转换为音频输出
 
 创建日期: 2026-06-07
+最后更新: 2026-06-14 (v0.2.6: 新增内置A/B区域循环播放机制，基于小节原子单位)
 依赖: 
   - pyfluidsynth >= 1.4.0 (Python绑定, 开源项目: pyfluidsynth/nwhitehead)
   - libfluidsynth-3.dll (FluidSynth C库, 需放到项目根目录或系统PATH中)
@@ -147,6 +148,16 @@ class SynthEngine:
         self._last_seek_time: float = 0.0  # 上次seek的系统时间(perf_counter)
         self._seek_debounce_ms: float = 50.0  # 防抖间隔(毫秒), 调整效果: 越大越防抖但响应越慢, 推荐50ms
         self._pending_seek_time: float = -1.0  # 待执行的seek目标时间(-1=无待执行)
+        
+        # === A/B区域循环(内置，基于音频线程) ===
+        # [v0.2.6] 将循环逻辑从UI层下沉到音频线程内部，彻底消除竞态/冷却/模拟时钟等问题
+        # 原理: _play_loop()在播放完所有事件后检查循环标志，
+        #       若启用则静音→重置时间基准→从头重新遍历事件(早于loop_start的自动被跳过)
+        # 优势: UI层只需调用set_loop_region()设置范围后正常读取current_time_ms即可，
+        #       不需要任何冷却帧计数器、模拟时钟、安全边界等复杂逻辑
+        self._loop_enabled: bool = False      # 是否启用A/B区域循环
+        self._loop_start_ms: float = 0.0      # 循环起始时间(毫秒)，对应A点所在小节的起始拍
+        self._loop_end_ms: float = 0.0        # 循环结束时间(毫秒)，对应B点所在小节的末尾拍
         
         # === 锁 ===
         self._lock = threading.RLock()  # 可重入锁，保护共享状态
@@ -562,6 +573,38 @@ class SynthEngine:
         if self._play_thread and self._play_thread.is_alive():
             self._play_thread.join(timeout=2.0)
     
+    def set_loop_region(self, start_ms: float, end_ms: float) -> None:
+        """
+        设置A/B区域循环范围(毫秒)
+        
+        [v0.2.6] 将循环逻辑从UI层下沉到音频引擎内部。
+        设置后，_play_loop()在播放到达end_ms时会自动回到start_ms继续播放，
+        整个过程在音频线程内完成，UI层无感知、无竞态、无需冷却机制。
+        
+        参数:
+            start_ms: 循环起始时间(毫秒)，对应A点所在小节的起始拍时间
+            end_ms:   循环结束时间(毫秒)，对应B点所在小节的末尾拍时间
+        
+        注意:
+            - 此方法只设置循环参数，不改变播放状态
+            - 需要在播放前或播放中调用均可（播放中调用下次循环周期生效）
+            - start_ms应 < end_ms，否则行为未定义
+            - 调用 clear_loop_region() 可取消循环
+        """
+        with self._lock:
+            self._loop_enabled = True
+            self._loop_start_ms = max(0, start_ms)
+            self._loop_end_ms = max(start_ms + 1, end_ms)  # 至少比start大1ms
+    
+    def clear_loop_region(self) -> None:
+        """
+        清除A/B区域循环设置，恢复为正常播放到结尾停止的模式
+        """
+        with self._lock:
+            self._loop_enabled = False
+            self._loop_start_ms = 0.0
+            self._loop_end_ms = 0.0
+    
     def silence_all_notes(self) -> None:
         """
         静音所有正在发声的音符(不停止播放线程，仅清除当前声音)
@@ -673,6 +716,15 @@ class SynthEngine:
                 if self._play_thread and self._play_thread.is_alive():
                     self._play_thread.join(timeout=1.0)
                 
+                # === Step 4.5: 预置 _start_time（修复短循环seek竞态条件）===
+                # [v0.2.5 关键修复] 必须在新线程启动前设置 _start_time
+                # 原因: current_time_ms 属性依赖 (_start_time, _initial_time_offset) 计算
+                #       若 seek() 返回后新线程尚未执行到 _start_time = perf_counter()
+                #       则 UI 线程读到的 current_time_ms = (now - 旧_start_time) + 新偏移 → 巨大值
+                #       导致 A/B 短循环在 seek 后立即误判为"已过B点"→ 再次 seek → 死循环卡在A点
+                # 修复: 在锁保护下预置 _start_time，新线程启动后会用几乎相同的值覆盖，无副作用
+                self._start_time = time.perf_counter()
+                
                 # === Step 5: 启动新的播放线程 ===
                 self._play_thread = threading.Thread(target=self._play_loop, daemon=True)
                 self._play_thread.start()
@@ -700,7 +752,11 @@ class SynthEngine:
              c. 否则 sleep 到达目标时间(考虑暂停)
              d. 发送 MIDI 事件到合成器
              e. 触发回调(用于视觉同步)
-          3. 所有事件处理完毕 → 播放结束
+          3. 所有事件处理完毕 → 检查循环标志 → 若启用则自动回到loop_start继续
+        
+        [v0.2.6] 内置A/B循环: 当_loop_enabled=True时，播放完所有事件(或到达loop_end)后
+          自动静音→重置时间基准→重新遍历事件列表(早于loop_start的事件被time检查跳过)。
+          整个循环过程在音频线程内完成，UI层通过current_time_ms属性读取到的时间自然在[loop_start, loop_end]范围内往复。
         """
         if not self._events:
             with self._lock:
@@ -720,7 +776,38 @@ class SynthEngine:
             self._start_time = time.perf_counter()
         
         try:
-            for evt in self._events:
+            # [v0.2.6] 用索引循环替代for循环，支持循环重启时重置索引
+            evt_idx = 0
+            num_events = len(self._events)
+            
+            while True:
+                # === 检查是否需要循环重启 ===
+                # 条件: 已遍历完所有事件 + 循环已启用 + 未收到停止信号
+                if evt_idx >= num_events:
+                    with self._lock:
+                        should_loop = self._loop_enabled and not self._stop_flag
+                    
+                    if should_loop:
+                        # === 循环重启: 回到loop_start位置 ===
+                        self.silence_all_notes()  # 静音当前发声的音符
+                        
+                        with self._lock:
+                            # 重置时间基准为循环起点
+                            start_offset = self._loop_start_ms
+                            self._initial_time_offset = start_offset
+                            self._current_time_ms = start_offset
+                            self._start_time = time.perf_counter()
+                        
+                        # 重置事件索引，从头遍历(早于loop_start的会被target_time_ms检查自动跳过)
+                        evt_idx = 0
+                        continue
+                    else:
+                        # 无循环 → 正常结束播放
+                        break
+                
+                evt = self._events[evt_idx]
+                evt_idx += 1
+                
                 # === 检查停止信号 ===
                 with self._lock:
                     if self._stop_flag:
@@ -762,6 +849,28 @@ class SynthEngine:
                 
                 # === 计算事件的绝对时间(毫秒) ===
                 target_time_ms = evt.time * ms_per_tick
+                
+                # [v0.2.6 增强] A/B循环边界检查: 事件时间超过loop_end时立即触发循环重启
+                # 原因: 如果只在所有事件播完后才循环(evt_idx>=num_events)，短循环(如小节0-2)
+                #       会先播完整首谱(240秒)才回到A点，用户感知为"没有跳回A点"
+                # 方案: 当事件时间>=loop_end时，视为"到达B点"，立即触发循环重启
+                if self._loop_enabled and self._loop_end_ms > 0:
+                    if target_time_ms >= self._loop_end_ms:
+                        # 到达B点! 触发循环重启
+                        self.silence_all_notes()
+                        
+                        with self._lock:
+                            if self._stop_flag:
+                                break
+                            # 重置时间基准为循环起点(A点)
+                            start_offset = self._loop_start_ms
+                            self._initial_time_offset = start_offset
+                            self._current_time_ms = start_offset
+                            self._start_time = time.perf_counter()
+                        
+                        # 重置事件索引，从头遍历(早于loop_start的会被自动跳过)
+                        evt_idx = 0
+                        continue  # 跳过当前事件，从第1个事件重新开始
                 
                 # 跳过已经过去的事件(seek时)
                 if target_time_ms < start_offset:
