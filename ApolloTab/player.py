@@ -54,7 +54,7 @@
   - PyQt5 (QPixmap, 用于图像渲染)
 
 创建日期: 2026-06-12
-最后更新: 2026-06-14 (v0.3.8: 新增基于小节的A/B区域循环播放API)
+最后更新: 2026-06-14 (v0.3.9: 新增find_measure_at_time方法+空白小节占位修复+全局唯一小节ID)
 ============================================================
 """
 
@@ -720,6 +720,118 @@ class GTPPlayer:
             self._synth_engine.seek(time_ms)
     
     # ================================================================
+    # 音量控制（实时调整）
+    # ================================================================
+    
+    def set_master_volume(self, db_value: float) -> None:
+        """
+        设置Master总音量(影响所有通道的最终输出)
+        
+        原理:
+          将dB值转换为线性增益系数，通过修改FluidSynth合成器的gain属性实现。
+          FluidSynth的gain参数控制最终输出音量，范围0.0-10.0。
+        
+        参数:
+            db_value: dB值, 范围-60.0~+12.0
+              - 0.0dB = 原始音量(单位增益)
+              - +6.0dB = 约2倍音量
+              - -60.0dB = 静音(接近0)
+              - 调整效果: 每变化6dB约等于音量翻倍/减半
+        
+        调用时机:
+          - 用户拖动Master音量滑块时
+          - 双击Master滑块重置为0dB时
+        """
+        import math
+        
+        # 将dB转换为线性增益 (20 * log10(gain) = db)
+        # 范围映射: -60dB → 0.001, 0dB → 1.0, +12dB → ~4.0
+        if db_value <= -60.0:
+            linear_gain = 0.001  # 接近静音但不完全为0
+        else:
+            linear_gain = 10 ** (db_value / 20.0)
+        
+        # 限制在FluidSynth支持的范围内(0.0-10.0)
+        linear_gain = max(0.0, min(10.0, linear_gain))
+        
+        # 更新内部gain值和synth_engine的gain
+        self._gain = linear_gain
+        if self._synth_engine and self._synth_engine.is_initialized:
+            try:
+                # 直接修改synth_engine的gain属性
+                self._synth_engine.gain = linear_gain
+                # 通过FluidSynth API设置主音量
+                if hasattr(self._synth_engine, '_synth') and self._synth_engine._synth:
+                    # FluidSynth的gain属性在初始化时设置，运行时修改需要重新创建
+                    # 这里我们通过降低每个通道的音量来模拟总音量控制
+                    for ch in range(16):
+                        master_vol = int(linear_gain * 127)
+                        self._synth_engine._synth.cc(ch, 7, min(127, max(0, master_vol)))
+            except Exception as e:
+                print(f"[GTPPlayer] 设置主音量失败: {e}")
+    
+    def set_track_volume(self, track_index: int, db_value: float) -> None:
+        """
+        设置单个音轨的音量(MIDI CC#7 Volume)
+        
+        原理:
+          使用MIDI Control Change消息7(Volume)来控制对应MIDI通道的音量。
+          MIDI音量范围0-127, 其中127=最大, 0=静音, 100=默认。
+          将dB值转换为MIDI音量值(0-127)后发送CC消息给对应通道。
+        
+        参数:
+            track_index: 音轨索引(0-based), 对应self.tracks[track_index]
+            db_value:    dB值, 范围-60.0~+12.0
+              - 0.0dB → MIDI音量100(默认)
+              - +12dB → MIDI音量127(最大)
+              - -60dB → MIDI音量0(静音)
+              - 调整效果: 实时生效，无需重启播放
+        
+        注意事项:
+          - 仅在全轨模式(MODE_ALL)下有效(每个音轨有独立MIDI通道)
+          - 单轨模式下只有当前轨一个通道，效果等同于Master音量
+          - 如果音频引擎未初始化，仅保存设置值(待后续init_audio时应用)
+        """
+        import math
+        
+        # 将dB值转换为MIDI音量值(0-127)
+        # 映射规则: -60dB→0, 0dB→100(默认), +12dB→127
+        if db_value <= -60.0:
+            midi_volume = 0
+        elif db_value >= 12.0:
+            midi_volume = 127
+        else:
+            # 线性插值: -60~+12dB 映射到 0~127
+            # 0dB时应该是100(标准默认音量)
+            normalized = (db_value + 60.0) / 72.0  # 归一化到0-1
+            midi_volume = int(normalized * 127)
+            midi_volume = max(0, min(127, midi_volume))
+        
+        # 存储设置(用于后续查询或重新初始化时恢复)
+        if not hasattr(self, '_track_volumes'):
+            self._track_volumes: Dict[int, int] = {}
+        self._track_volumes[track_index] = midi_volume
+        
+        # 尝试实时应用到音频引擎
+        if self._synth_engine and self._synth_engine.is_initialized:
+            try:
+                # 获取该音轨对应的MIDI通道
+                if self._audio_mode == self.MODE_ALL and self._track_channels:
+                    # 全轨模式: 每个音轨有独立的MIDI通道
+                    if track_index < len(self._track_channels):
+                        channel = self._track_channels[track_index]
+                        # 发送MIDI CC#7 (Volume)消息
+                        self._synth_engine._synth.cc(channel, 7, midi_volume)
+                        print(f"[GTPPlayer] Track {track_index} (CH{channel}): {midi_volume}/127")
+                elif self._audio_mode == self.MODE_CURRENT:
+                    # 单轨模式: 只有一个活动通道(通常是channel 0)
+                    # 所有音轨滑块都控制同一个通道
+                    self._synth_engine._synth.cc(0, 7, midi_volume)
+                    print(f"[GTPPlayer] Track {track_index} (CH0): {midi_volume}/127")
+            except Exception as e:
+                print(f"[GTPPlayer] 设置音轨{track_index}音量失败: {e}")
+    
+    # ================================================================
     # A/B区域循环（基于小节原子单位）
     # ================================================================
     
@@ -762,14 +874,17 @@ class GTPPlayer:
         if not self._playhead_timeline or not self._synth_engine:
             return False
         
-        # 收集所有唯一的小节索引及其对应的拍条目
-        measure_entries = {}  # meas_idx -> [entries]
+        # [v2.0.6修复] 使用全局唯一小节ID(global_meas_idx)作为字典key
+        # 旧代码用meas_idx做key，但meas_idx在每个系统(System/行)内从0重新计数，
+        # 导致不同系统的同名小节(如都是小节0)被合并到同一个key下 → 循环设置错误
+        # 新方案: global_meas_idx在build_timeline中递增，跨系统/页全局唯一
+        measure_entries = {}  # global_meas_idx -> [entries]
         for entry in self._playhead_timeline:
-            m_idx = entry.get('meas_idx', -1)
-            if m_idx >= 0:
-                if m_idx not in measure_entries:
-                    measure_entries[m_idx] = []
-                measure_entries[m_idx].append(entry)
+            g_idx = entry.get('global_meas_idx', -1)
+            if g_idx >= 0:
+                if g_idx not in measure_entries:
+                    measure_entries[g_idx] = []
+                measure_entries[g_idx].append(entry)
         
         if not measure_entries:
             return False
@@ -881,15 +996,18 @@ class GTPPlayer:
         elif idx >= len(self._playhead_timeline):
             idx = len(self._playhead_timeline) - 1
         
-        meas_idx = self._playhead_timeline[idx].get('meas_idx')
+        # [v2.0.6修复] 返回全局唯一小节ID(而非系统内局部meas_idx)
+        global_meas_idx = self._playhead_timeline[idx].get('global_meas_idx')
+        local_meas_idx = self._playhead_timeline[idx].get('meas_idx')  # 保留用于调试显示
         found_time = self._playhead_timeline[idx].get('time_ms', 0)
         
         # [调试] 打印查找结果
         print(f"[GTPPlayer] _find_measure_at_time({time_ms:.0f}ms): "
               f"idx={idx}/{len(self._playhead_timeline)-1}, "
-              f"meas_idx={meas_idx}, 该条目time_ms={found_time:.0f}")
+              f"global_meas={global_meas_idx}(local={local_meas_idx}), "
+              f"该条目time_ms={found_time:.0f}")
         
-        return meas_idx
+        return global_meas_idx
     
     def clear_loop_region(self) -> None:
         """清除A/B区域循环设置"""
@@ -903,6 +1021,102 @@ class GTPPlayer:
             with self._synth_engine._lock:
                 return self._synth_engine._loop_enabled
         return False
+    
+    @property
+    def loop_time_range(self) -> tuple:
+        """
+        获取当前A/B循环的时间范围(毫秒)
+        
+        返回:
+            (loop_start_ms, loop_end_ms) 元组，若循环未启用则返回 (0, 0)
+            
+        用途: UI层判断点击的小节是否在循环区间内
+        """
+        if self._synth_engine:
+            with self._synth_engine._lock:
+                if self._synth_engine._loop_enabled:
+                    return (self._synth_engine._loop_start_ms, self._synth_engine._loop_end_ms)
+        return (0, 0)
+    
+    def find_measure_at_scroll_pos(self, scroll_y: float) -> Optional[dict]:
+        """
+        根据滚动Y位置查找所在的小节信息(点击跳转用)
+        
+        原理: 在 _playhead_timeline 中对 scroll_y 做二分查找，
+              找到点击位置对应的拍条目，再获取该条目所在的小节索引，
+              最后找到该小节的第一个拍(起始位置)的时间和scroll_y。
+        
+        参数:
+            scroll_y: 点击处在总内容中的绝对Y坐标(像素)
+            
+        返回:
+            dict包含:
+              - meas_idx: 小节索引(int)
+              - start_time_ms: 该小节第一个拍的音频时间(毫秒)
+              - start_scroll_y: 该小节第一个拍的scroll_y(像素)
+            若找不到返回None(非GTP文件或时间线为空时)
+            
+        用途: 点击谱面时以"小节"为单位定位而非精确像素，
+              确保跳转到小节开头，与A/B循环的小节原子单位一致
+        """
+        if not self._playhead_timeline or not self._timeline_scroll_ys:
+            return None
+        
+        # 边界处理: 超出范围 → 钳位到首/尾
+        if scroll_y <= 0:
+            first = self._playhead_timeline[0]
+            return {
+                'global_meas_idx': first.get('global_meas_idx', 0),  # [v2.0.6] 全局唯一ID
+                'meas_idx': first.get('meas_idx', 0),               # 局部ID(用于显示)
+                'start_time_ms': first.get('time_ms', 0),
+                'start_scroll_y': first.get('scroll_y', 0),
+            }
+        
+        last_scroll_y = self._timeline_scroll_ys[-1] if self._timeline_scroll_ys else 0
+        if scroll_y >= last_scroll_y:
+            # 找到最后一个有效条目所在的小节
+            last = self._playhead_timeline[-1]
+            target_global_meas = last.get('global_meas_idx', 0)
+            # 回溯找该小节第一个拍
+            for entry in self._playhead_timeline:
+                if entry.get('global_meas_idx') == target_global_meas:  # [v2.0.6] 用全局ID匹配
+                    return {
+                        'global_meas_idx': target_global_meas,
+                        'meas_idx': entry.get('meas_idx', 0),
+                        'start_time_ms': entry.get('time_ms', 0),
+                        'start_scroll_y': entry.get('scroll_y', 0),
+                    }
+            return {
+                'global_meas_idx': target_global_meas,
+                'meas_idx': last.get('meas_idx', 0),
+                'start_time_ms': last.get('time_ms', 0),
+                'start_scroll_y': last.get('scroll_y', 0),
+            }
+        
+        # 二分查找: 找到第一个 > scroll_y 的位置，退一位
+        idx = bisect.bisect_right(self._timeline_scroll_ys, scroll_y) - 1
+        if idx < 0:
+            idx = 0
+        elif idx >= len(self._playhead_timeline):
+            idx = len(self._playhead_timeline) - 1
+        
+        clicked_entry = self._playhead_timeline[idx]
+        target_global_meas = clicked_entry.get('global_meas_idx')  # [v2.0.6] 全局唯一ID
+        
+        # 向前回溯找到该小节的第一个拍(起始位置)
+        start_entry = clicked_entry
+        for i in range(idx, -1, -1):
+            if self._playhead_timeline[i].get('global_meas_idx') == target_global_meas:  # [v2.0.6]
+                start_entry = self._playhead_timeline[i]
+            else:
+                break  # 进入前一个小节，停止
+        
+        return {
+            'global_meas_idx': target_global_meas,
+            'meas_idx': start_entry.get('meas_idx', 0),  # 局部ID(用于UI显示)
+            'start_time_ms': start_entry.get('time_ms', 0),
+            'start_scroll_y': start_entry.get('scroll_y', 0),
+        }
     
     def shutdown(self) -> None:
         """
@@ -1003,6 +1217,7 @@ class GTPPlayer:
                 page_scales.append(1)
         
         cumulative_y = 0.0  # 累计Y偏移(所有之前页面的总高度)
+        global_meas_idx = 0  # [v2.0.6修复] 全局唯一小节ID(跨系统/页不重复)
         
         # 遍历所有页面布局
         for page_idx, page in enumerate(page_layouts):
@@ -1031,9 +1246,36 @@ class GTPPlayer:
                     
                     beats_in_measure = m_layout.beats
                     if not beats_in_measure:
-                        # 无拍的空小节：只累加时间
+                        # [v2.0.6修复] 空白小节(无拍/音符): 生成单个占位条目
+                        # 原代码用continue跳过 → 该小节无timeline条目 → 点击时定位到相邻有音符的小节(误差大)
+                        # 新方案: 记录空白小节的起始scroll_y和time_ms，使点击可正确定位
+                        n_measures_in_system = len(system.measures)
+                        rel_pos = meas_idx / max(n_measures_in_system, 1)
+                        sys_h_render = max(system.y_tab_bottom - system.y_tab_top, 1)
+                        
+                        scroll_y = (
+                            page_base_y
+                            + (system.y_tab_top + rel_pos * sys_h_render) * page_scale_ratio
+                        )
+                        
+                        placeholder = {
+                            'time_ms': current_time_ms,
+                            'scroll_y': scroll_y,
+                            'page_idx': page_idx,
+                            'sys_idx': sys_idx,
+                            'meas_idx': meas_idx,
+                            'global_meas_idx': global_meas_idx,
+                            'beat_idx': -1,  # 标记为空白小节占位条目
+                            'x_center': 0, 'x_start': 0, 'x_end': 0,
+                            'y_top': system.y_tab_top,
+                            'y_bottom': system.y_tab_bottom,
+                        }
+                        self._playhead_timeline.append(placeholder)
+                        
+                        # 累加时间后递增全局ID
                         current_time_ticks += measure_ticks
                         current_time_ms = current_time_ticks * ms_per_tick
+                        global_meas_idx += 1
                         continue
                     
                     n_beats = len(beats_in_measure)
@@ -1062,6 +1304,7 @@ class GTPPlayer:
                             'page_idx': page_idx,
                             'sys_idx': sys_idx,
                             'meas_idx': meas_idx,
+                            'global_meas_idx': global_meas_idx,  # [v2.0.6] 全局唯一ID
                             'beat_idx': beat_idx,
                             'x_center': b_layout.x_center,
                             'x_start': b_layout.x_start,
@@ -1074,6 +1317,9 @@ class GTPPlayer:
                         # 累加时间和tick
                         current_time_ticks += tick_per_beat
                         current_time_ms = current_time_ticks * ms_per_tick
+                    
+                    # [v2.0.6修复] 每处理完一个小节，全局ID递增(确保跨系统/页唯一)
+                    global_meas_idx += 1
         
         # === 后处理: 确保scroll_y严格单调递增 + 可选哨兵 ===
         if self._playhead_timeline:
@@ -1111,6 +1357,7 @@ class GTPPlayer:
                     # 旧代码硬编码meas_idx=0，导致B点在谱子末尾时_find_measure_at_time返回0
                     'sys_idx': last_entry.get('sys_idx', 0),
                     'meas_idx': last_entry.get('meas_idx', 0),
+                    'global_meas_idx': last_entry.get('global_meas_idx', 0),  # [v2.0.6] 全局唯一ID
                     'beat_idx': last_entry.get('beat_idx', 0),
                     'x_center': 0, 'x_start': 0, 'x_end': 0,
                     'y_top': 0, 'y_bottom': 0,
