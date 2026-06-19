@@ -33,7 +33,7 @@
   - 内部依赖: gtp_engine.models.*, layout_engine.*, utils.constants
 
 创建日期: 2026-06-06
-最后更新: 2026-06-13 (v0.2.8: 标题右侧新增调号拍号显示 1=X (A/B))
+最后更新: 2026-06-18 (v0.2.9: 标题居中显示+行距增大)
 ============================================================
 """
 
@@ -306,8 +306,8 @@ class TabRenderer:
         if len(title_text) > 50:
             title_text = title_text[:47] + "..."
 
-        # 标题左侧绘制
-        painter.drawText(QRect(10, y, page_width - 200, 25), Qt.AlignLeft, title_text)
+        # 标题居中绘制（页首中间位置）
+        painter.drawText(QRect(10, y, page_width - 200, 30), Qt.AlignCenter, title_text)
 
         # 调号拍号绘制在标题右侧: 格式为 "1=C (4/4)"
         kt_str = self._format_key_time_signature(song)
@@ -317,7 +317,7 @@ class TabRenderer:
             painter.setPen(QColor("#888888"))
             painter.drawText(QRect(page_width - 180, y, 170, 25), Qt.AlignRight | Qt.AlignVCenter, kt_str)
 
-        y += 26
+        y += 35  # 标题行与信息行之间的行距（增大以增加呼吸空间）
         
         # 第二行：轨道名 | 调弦(简化显示) | BPM
         info_font = QFont(self.cfg.NOTE_FONT_FAMILY, self.cfg.INFO_FONT_SIZE)

@@ -6,6 +6,7 @@
          包含调弦、乐器设置、所有小节等内容
 
 创建日期: 2026-06-06
+最后更新: 2026-06-18 (v0.2.2: 调弦名称改为英文硬编码)
 依赖: Python 3.8+ dataclasses
 ============================================================
 """
@@ -59,25 +60,35 @@ class GTPTrack:
 
     def get_tuning_name(self) -> str:
         """
-        获取调弦方案的名称
-        返回: 已知调弦返回名称，否则返回自定义描述
+        获取调弦方案的名称（英文硬编码）
+        
+        原理:
+          遍历预设调弦方案元组与当前调弦匹配，返回英文名称。
+          英语受众更广，无需国际化翻译。
+          
+        返回: 已知调弦返回英文标准名称，否则返回自定义描述
         
         匹配方式: 遍历所有预设调弦方案，逐一比较元组值。
                  比字典键方式更健壮，可处理元组子类/类型差异等边界情况。
         """
         from ..utils.constants import StandardTunings
         tuning_tuple = self.strings
-        for name, stuning in [
-            ("标准调弦(EADGBE)", StandardTunings.STANDARD),
+        
+        # 调弦名称映射表: (英文显示名, 预设值元组)
+        tuning_map = [
+            ("Standard", StandardTunings.STANDARD),
             ("Drop D", StandardTunings.DROP_D),
             ("Open G", StandardTunings.OPEN_G),
             ("Open D", StandardTunings.OPEN_D),
             ("DADGAD", StandardTunings.DADGAD),
-            ("降半音", StandardTunings.HALF_STEP_DOWN),
-        ]:
+            ("Half Step Down", StandardTunings.HALF_STEP_DOWN),
+        ]
+        
+        for name, stuning in tuning_map:
             if tuning_tuple == stuning:
                 return name
-        return f"自定义调弦({len(self.strings)}弦)"
+        
+        return f"Custom ({len(self.strings)} strings)"
 
     def get_total_beats(self) -> int:
         """获取该轨道所有小节的总拍数"""
