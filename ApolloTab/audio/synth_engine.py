@@ -4,17 +4,20 @@
 文件名: synth_engine.py
 功能描述: FluidSynth 音频合成引擎 - 基于 SoundFont 的实时 MIDI 播放
          将 MIDI 事件序列通过 FluidSynth 合成器转换为音频输出
+         [v0.2.11] 新增跨平台库查找支持 (Windows DLL / Linux .so)
 
 创建日期: 2026-06-07
-最后更新: 2026-06-14 (v0.2.6: 新增内置A/B区域循环播放机制，基于小节原子单位)
+最后更新: 2026-06-19 (v0.2.11: 新增 Linux .so 文件自动查找，支持多发行版)
 依赖: 
   - pyfluidsynth >= 1.4.0 (Python绑定, 开源项目: pyfluidsynth/nwhitehead)
-  - libfluidsynth-3.dll (FluidSynth C库, 需放到项目根目录或系统PATH中)
+  - Windows: libfluidsynth-3.dll (FluidSynth C库, 需放到项目根目录或系统PATH中)
+  - Linux:   libfluidsynth.so.x (通过包管理器安装: apt/dnf/pacman)
   - SoundFont 文件 (.sf2) 用于音色采样
 设计原则:
   - 线程安全: 音频播放在独立线程中运行，不阻塞UI主线程
   - 精确定时: 使用系统高精度定时器驱动 MIDI 事件发送
   - 资源管理: 自动释放合成器资源，支持多次初始化/销毁
+  - 跨平台: 自动识别操作系统并使用对应的库文件查找策略
 
 调用示例:
     from gtp_engine.audio.synth_engine import SynthEngine
@@ -36,13 +39,16 @@
 依赖库说明:
   - pyfluidsynth: FluidSynth 的 Python ctypes 绑定（开源项目: nwhitehead/pyfluidsynth）
     安装命令: pip install pyfluidsynth -i https://pypi.tuna.tsinghua.edu.cn/simple
-  - libfluidsynth-3.dll: FluidSynth C运行时库
+  - libfluidsynth-3.dll: FluidSynth C运行时库 (Windows)
     下载地址: https://github.com/FluidSynth/fluidsynth/releases
     放置位置: 项目根目录即可（代码自动搜索）
+  - libfluidsynth.so.x: FluidSynth C运行时库 (Linux)
+    安装方式: 通过各发行版包管理器安装（代码自动搜索常见路径）
 ============================================================
 """
 
 import os
+import platform
 import time
 import threading
 from typing import List, Optional, Callable
@@ -215,25 +221,54 @@ class SynthEngine:
           用户可将DLL放到项目根目录即可免安装使用。
         """
         try:
-            # === 将DLL目录加入PATH(让ctypes.util.find_library能找到libfluidsynth-3.dll) ===
-            _dll_dir = self._get_project_root()
-            _dll_path = os.path.join(_dll_dir, "libfluidsynth-3.dll")
+            # === 根据操作系统平台查找并加载 FluidSynth 库 ===
+            _system = platform.system()
             
-            if os.path.isfile(_dll_path):
-                # 将DLL目录添加到环境变量PATH（ctypes.util.find_library依赖PATH搜索）
-                _old_path = os.environ.get('PATH', '')
-                if _dll_dir not in _old_path:
-                    os.environ['PATH'] = _dll_dir + os.pathsep + _old_path
-                print(f"[SynthEngine] 已添加DLL目录到PATH: {_dll_dir}")
+            if _system == 'Windows':
+                # === Windows: 查找 DLL 并添加到 PATH ===
+                _dll_dir = self._get_project_root()
+                _dll_path = os.path.join(_dll_dir, "libfluidsynth-3.dll")
                 
-                # Python 3.8+ 同时添加到DLL搜索目录(用于运行时加载)
-                if hasattr(os, 'add_dll_directory'):
+                if os.path.isfile(_dll_path):
+                    # 将DLL目录添加到环境变量PATH（ctypes.util.find_library依赖PATH搜索）
+                    _old_path = os.environ.get('PATH', '')
+                    if _dll_dir not in _old_path:
+                        os.environ['PATH'] = _dll_dir + os.pathsep + _old_path
+                    print(f"[SynthEngine] 已添加DLL目录到PATH: {_dll_dir}")
+                    
+                    # Python 3.8+ 同时添加到DLL搜索目录(用于运行时加载)
+                    if hasattr(os, 'add_dll_directory'):
+                        try:
+                            os.add_dll_directory(_dll_dir)
+                        except OSError:
+                            pass  # 某些情况下可能失败，不影响PATH方式
+                else:
+                    print(f"[SynthEngine] 警告: 未找到 libfluidsynth-3.dll")
+                    
+            elif _system == 'Linux':
+                # === Linux: 查找 .so 文件（包管理器安装的） ===
+                _so_path = self._find_so_path()
+                
+                if _so_path:
+                    # 将 .so 所在目录添加到 LD_LIBRARY_PATH（让 ctypes 能找到依赖库）
+                    _so_dir = os.path.dirname(_so_path)
+                    _old_ld_path = os.environ.get('LD_LIBRARY_PATH', '')
+                    if _so_dir not in _old_ld_path:
+                        os.environ['LD_LIBRARY_PATH'] = _so_dir + os.pathsep + _old_ld_path
+                    print(f"[SynthEngine] 已找到 libfluidsynth.so: {_so_path}")
+                    
+                    # 预加载 .so 文件（确保 ctypes.CDLL 能找到）
                     try:
-                        os.add_dll_directory(_dll_dir)
-                    except OSError:
-                        pass  # 某些情况下可能失败，不影响PATH方式
-            else:
-                print(f"[SynthEngine] 警告: 未找到 libfluidsynth-3.dll")
+                        import ctypes
+                        ctypes.CDLL(_so_path, mode=ctypes.RTLD_GLOBAL)
+                        print(f"[SynthEngine] 已预加载: {_so_path}")
+                    except OSError as e:
+                        print(f"[SynthEngine] 预加载失败: {e}")
+                else:
+                    print(f"[SynthEngine] 警告: 未找到 libfluidsynth.so (请安装 fluidsynth)")
+                    print("  Ubuntu/Debian: sudo apt-get install libfluidsynth3")
+                    print("  Fedora/RHEL:   sudo dnf install fluidsynth-libs")
+                    print("  Arch Linux:    sudo pacman -S fluidsynth")
             
             import fluidsynth
             
@@ -249,14 +284,12 @@ class SynthEngine:
             
             if self._audio_driver is None:
                 # 尝试指定驱动
-                import platform
-                system = platform.system()
                 driver_map = {
                     'Windows': 'dsound',
                     'Linux': 'pulseaudio',
                     'Darwin': 'coreaudio'
                 }
-                driver = driver_map.get(system, 'default')
+                driver = driver_map.get(_system, 'default')
                 self._audio_driver = self._synth.start(driver=driver)
             
             return True
@@ -305,7 +338,7 @@ class SynthEngine:
     
     def _find_dll_path(self) -> str:
         """
-        查找 libfluidsynth-3.dll 的完整路径
+        查找 libfluidsynth-3.dll 的完整路径 (仅 Windows)
         
         返回:
             DLL完整路径，找不到返回空字符串
@@ -315,6 +348,74 @@ class SynthEngine:
             _path = os.path.join(_root, _name)
             if os.path.isfile(_path):
                 return _path
+        return ""
+    
+    @staticmethod
+    def _find_so_path() -> str:
+        """
+        查找 libfluidsynth.so 的完整路径 (仅 Linux)
+        
+        原理: 按常见 Linux 发行版的包管理器安装路径搜索:
+             1. Ubuntu/Debian (apt): /usr/lib/x86_64-linux-gnu/
+             2. Fedora/RHEL/CentOS (dnf/yum): /usr/lib64/
+             3. Arch Linux/openSUSE (pacman/zypper): /usr/lib/
+             4. Alpine Linux (apk): /usr/lib/
+             5. 通用路径: /usr/local/lib/
+        
+        搜索的文件名（按版本优先级）:
+             - libfluidsynth.so.3 (FluidSynth v2.x/v3.x)
+             - libfluidsynth.so.2 (FluidSynth v1.x/v2.x)
+             - libfluidsynth.so.1 (FluidSynth v1.x)
+        
+        返回:
+            .so 文件完整路径，找不到返回空字符串
+        
+        安装命令参考:
+             Ubuntu/Debian: sudo apt-get install libfluidsynth3
+             Fedora/RHEL:   sudo dnf install fluidsynth-libs
+             Arch Linux:    sudo pacman -S fluidsynth
+             openSUSE:      sudo zypper install libfluidsynth3
+             Alpine:        sudo apk add fluidsynth
+        """
+        # === 按 Linux 发行版分类的搜索路径（按优先级排序） ===
+        # 格式: (目录路径, 发行版说明)
+        _so_search_paths = [
+            # Ubuntu/Debian (多架构支持)
+            ("/usr/lib/x86_64-linux-gnu", "Ubuntu/Debian x64"),
+            ("/usr/lib/aarch64-linux-gnu", "Ubuntu/Debian ARM64"),
+            ("/usr/lib/i386-linux-gnu", "Ubuntu/Debian i386"),
+            
+            # Fedora/RHEL/CentOS (RPM系)
+            ("/usr/lib64", "Fedora/RHEL/CentOS"),
+            
+            # Arch Linux / openSUSE / Alpine / 通用
+            ("/usr/lib", "Arch Linux/openSUSE/Alpine/通用"),
+            ("/usr/local/lib", "本地编译安装"),
+            
+            # Homebrew on Linux (较少见但支持)
+            ("/home/linuxbrew/.linuxbrew/lib", "Linuxbrew"),
+        ]
+        
+        # === 搜索的 .so 文件名（按版本从高到低） ===
+        _so_names = [
+            "libfluidsynth.so.3",   # FluidSynth v2.x/v3.x (推荐)
+            "libfluidsynth.so.2",   # FluidSynth v1.x/v2.x
+            "libfluidsynth.so.1",   # FluidSynth v1.x
+            "libfluidsynth.so",     # 无版本号的符号链接(部分发行版)
+        ]
+        
+        # === 遍历所有候选路径和文件名 ===
+        for _dir_path, _distro in _so_search_paths:
+            if not os.path.isdir(_dir_path):
+                continue
+                
+            for _so_name in _so_names:
+                _full_path = os.path.join(_dir_path, _so_name)
+                if os.path.isfile(_full_path):
+                    print(f"[SynthEngine] 找到 .so 文件 ({_distro}): {_full_path}")
+                    return _full_path
+        
+        # === 未找到，返回空字符串 ===
         return ""
     
     def load_soundfont(self, path: str = None) -> bool:
