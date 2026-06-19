@@ -5,9 +5,10 @@
 功能描述: FluidSynth 音频合成引擎 - 基于 SoundFont 的实时 MIDI 播放
          将 MIDI 事件序列通过 FluidSynth 合成器转换为音频输出
          [v0.2.11] 新增跨平台库查找支持 (Windows DLL / Linux .so)
+         [v0.2.12] 新增 Linux 多音频驱动自动尝试 (pulseaudio/alsa/jack等)
 
 创建日期: 2026-06-07
-最后更新: 2026-06-19 (v0.2.11: 新增 Linux .so 文件自动查找，支持多发行版)
+最后更新: 2026-06-19 (v0.2.12: Linux 下自动尝试多种音频驱动解决无声音问题)
 依赖: 
   - pyfluidsynth >= 1.4.0 (Python绑定, 开源项目: pyfluidsynth/nwhitehead)
   - Windows: libfluidsynth-3.dll (FluidSynth C库, 需放到项目根目录或系统PATH中)
@@ -278,19 +279,49 @@ class SynthEngine:
                 sample_rate=self.sample_rate
             )
             
-            # 启动音频驱动（默认使用系统默认音频输出）
-            # driver: 'pulseaudio'(Linux), 'dsound'(Windows), 'coreaudio'(macOS)
-            self._audio_driver = self._synth.start(driver=None)
+            # 启动音频驱动（根据操作系统自动选择）
+            # 原理: 不同Linux发行版/桌面环境使用不同的音频后端，
+            #       需要按优先级依次尝试直到成功:
+            #       - pulseaudio: Ubuntu 20.04 及更早版本默认
+            #       - pipewire:   Ubuntu 22.04+ / Fedora 34+ 默认(兼容PulseAudio API)
+            #       - alsa:       纯ALSA系统(Docker容器/无桌面环境)
+            #       - jack:       专业音频工作站
+            #       - default:    FluidSynth内置自动检测(最后尝试)
+            
+            if _system == 'Windows':
+                # Windows 使用 DirectSound
+                _driver_list = ['dsound', 'waveout', 'default']
+            elif _system == 'Darwin':
+                # macOS 使用 CoreAudio
+                _driver_list = ['coreaudio', 'default']
+            else:
+                # Linux: 按优先级尝试多种音频驱动
+                _driver_list = ['pulseaudio', 'pipewire', 'alsa', 'jack', 'default']
+            
+            self._audio_driver = None
+            for _drv in _driver_list:
+                try:
+                    print(f"[SynthEngine] 尝试音频驱动: {_drv}")
+                    self._audio_driver = self._synth.start(driver=_drv)
+                    if self._audio_driver is not None:
+                        print(f"[SynthEngine] 音频驱动启动成功: {_drv}")
+                        break
+                    else:
+                        print(f"[SynthEngine] 驱动 {_drv} 不可用，尝试下一个...")
+                except Exception as _drv_err:
+                    print(f"[SynthEngine] 驱动 {_drv} 启动失败: {_drv_err}")
             
             if self._audio_driver is None:
-                # 尝试指定驱动
-                driver_map = {
-                    'Windows': 'dsound',
-                    'Linux': 'pulseaudio',
-                    'Darwin': 'coreaudio'
-                }
-                driver = driver_map.get(_system, 'default')
-                self._audio_driver = self._synth.start(driver=driver)
+                print("[SynthEngine] 警告: 所有音频驱动均无法启动，将无声音输出")
+                print("  可能原因:")
+                print("  1. 未安装音频服务 (PulseAudio/PipeWire/ALSA)")
+                print("  2. Docker 容器内未挂载 /dev/snd 设备")
+                print("  3. SSH 远程连接时未配置音频转发")
+                print("")
+                print("  安装命令:")
+                print("    Ubuntu/Debian: sudo apt-get install pulseaudio-utils libasound2")
+                print("    Fedora/RHEL:   sudo dnf install pulseaudio-libs alsa-lib")
+                print("    Docker:        添加 --device /dev/snd 参数")
             
             return True
             
