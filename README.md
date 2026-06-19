@@ -461,8 +461,8 @@ Issues and Pull Requests are welcome!
 
 ***
 
-**Version**: v0.3.9
-**Last Updated**: 2026-06-14
+**Version**: v0.4.0
+**Last Updated**: 2026-06-19
 **Compatibility**: Windows / Linux / macOS (Python 3.8+)
 
 ***
@@ -954,6 +954,6 @@ mypy ApolloTab/
 
 ***
 
-**版本**: v0.3.9
-**最后更新**: 2026-06-14
+**版本**: v0.4.0
+**最后更新**: 2026-06-19
 **兼容性**: Windows / Linux / macOS (Python 3.8+)
