@@ -1,151 +1,61 @@
-# ApolloTab v0.3.9 - Release Notes
+# ApolloTab v0.4.0 - Release Notes
 
-**Release Date**: June 14, 2026
-**Commit**: `057d8f4`
+**Release Date**: June 19, 2026
+**Commit**: `763b021`
 **Author**: Zhu Wenqian
 
 ---
 
 ## Overview
 
-ApolloTab v0.3.9 focuses on fixing critical playhead timeline accuracy issues for songs containing empty/rest measures, and introduces a global unique measure identification system that enables precise cross-page measure lookup.
+ApolloTab v0.4.0 is a style-focused release that improves the visual presentation of rendered tablature and internationalizes tuning names for broader audience reach.
 
 ---
 
-## Bug Fixes
+## Changes
 
-### Critical Fix: Empty Measure Click Positioning Inaccuracy
+### Title Centering & Spacing Improvement
 
-**Issue**: When a Guitar Pro song contains empty measures (measures with only rests or no notes/beats), clicking on these areas in the UI would cause the playhead cursor to jump to an adjacent non-empty measure, resulting in significant positioning errors.
+**File**: [tab_renderer.py:306-320](file:///e:/Projects/ApolloTab/ApolloTab/renderer/tab_renderer.py#L306-L320)
 
-**Root Cause**: The `build_timeline()` method in `GTPPlayer` used `continue` to skip empty measures (where `m_layout.beats` is empty/falsy). This meant those measures had no corresponding timeline entries, so the binary search in click handlers would land on the nearest populated entry instead.
+The page header title has been redesigned for a more professional, balanced appearance:
 
-**Fix Implemented** ([player.py:1246-1282](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1246-L1282)):
+| Property | Before | After |
+|----------|--------|-------|
+| Alignment | `Qt.AlignLeft` (left-aligned) | `Qt.AlignCenter` (centered) |
+| Title rect height | 25px | 30px |
+| Post-title spacing | 26px | 35px |
 
-```python
-# [v0.3.9] Empty measure placeholder generation:
-# Instead of skipping empty measures with 'continue',
-# generate a placeholder timeline entry with correct scroll_y and time_ms
-if not beats_in_measure:
-    n_measures_in_system = len(system.measures)
-    rel_pos = meas_idx / max(n_measures_in_system, 1)
-    sys_h_render = max(system.y_tab_bottom - system.y_tab_top, 1)
-
-    scroll_y = (
-        page_base_y
-        + (system.y_tab_top + rel_pos * sys_h_render) * page_scale_ratio
-    )
-
-    placeholder = {
-        'time_ms': current_time_ms,
-        'scroll_y': scroll_y,
-        # ... page/sys/meas indices ...
-        'beat_idx': -1,  # Marks this as an empty measure placeholder
-        # ... coordinate fields ...
-    }
-    self._playhead_timeline.append(placeholder)
-```
-
-**Impact**:
-- Clicks on empty/rest measures now position the playhead correctly
-- No more "jumping" to adjacent measures when clicking silent sections
-- Accurate A/B loop point placement even in rest-heavy passages
-
-### Fix: Sentinel Point Measure Index Inheritance
-
-**Issue**: The sentinel (end-of-timeline) entry had hardcoded `meas_idx=0`, which caused `_find_measure_at_time()` to return measure 0 when the B-loop-point was set at the end of the song.
-
-**Fix** ([player.py:1357](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1357)): Sentinel now inherits all measure indices from the last real timeline entry:
+**Before**: Title was left-aligned against the page margin, creating visual imbalance.
+**After**: Title sits centered in the page header area with increased breathing room before the track info line.
 
 ```python
-sentinel = {
-    # ...
-    'sys_idx': last_entry.get('sys_idx', 0),
-    'meas_idx': last_entry.get('meas_idx', 0),
-    'global_meas_idx': last_entry.get('global_meas_idx', 0),  # New: global ID
-    'beat_idx': last_entry.get('beat_idx', 0),
-    # ...
-}
+# Before
+painter.drawText(QRect(10, y, page_width - 200, 25), Qt.AlignLeft, title_text)
+y += 26
+
+# After
+painter.drawText(QRect(10, y, page_width - 200, 30), Qt.AlignCenter, title_text)
+y += 35  # Increased spacing for better visual breathing room
 ```
 
----
+### English Tuning Names (Internationalization)
 
-## New Features
+**File**: [track.py:63-95](file:///e:/Projects/ApolloTab/ApolloTab/models/track.py#L63-L95)
 
-### Global Unique Measure ID (`global_meas_idx`)
+`GTPTrack.get_tuning_name()` now returns English names instead of Chinese:
 
-**Problem**: The existing `meas_idx` was local to each system (row), meaning measure 0 could appear multiple times across different systems/pages. This made it impossible to uniquely identify a measure when implementing features like "click to jump to measure N" or cross-referencing between audio time and visual position.
+| Tuning | Before (Chinese) | After (English) |
+|--------|------------------|-----------------|
+| Standard EADGBE | "标准调弦(EADGBE)" | "Standard" |
+| Drop D | "Drop D" | "Drop D" |
+| Open G | "Open G" | "Open G" |
+| Open D | "Open D" | "Open D" |
+| DADGAD | "DADGAD" | "DADGAD" |
+| Half Step Down | "降半调" | "Half Step Down" |
+| Custom/Unknown | "自定义调弦(N弦)" | "Custom (N strings)" |
 
-**Solution**: Introduced `global_meas_idx` - a monotonically increasing integer that increments once per processed measure, guaranteed unique across all systems and pages.
-
-**Implementation Details** ([player.py:1217](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1217), [player.py:1304](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1304), [player.py:1317](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1317)):
-
-1. Initialized as `global_meas_idx = 0` before page iteration
-2. Incremented after processing each measure (both empty and populated)
-3. Included in every timeline entry (real beats + placeholders + sentinel)
-
-### `find_measure_at_time()` Method
-
-**New API Method** ([player.py:1174-1206](file:///e:/Projects/ApolloTab/ApolloTab/player.py#L1174-L1206)):
-
-| Method | Description |
-|--------|-------------|
-| `find_measure_at_time(time_ms=None, scroll_y=None)` | Find measure info at given time or scroll position |
-
-**Returns**:
-```python
-{
-    'global_meas_idx': int,   # Global unique measure ID
-    'meas_idx': int,          # Local index within system (for UI display)
-    'start_time_ms': float,   # Start time of this measure (ms)
-    'start_scroll_y': float,  # Start scroll Y position of this measure
-}
-```
-
-**Usage Example**:
-
-```python
-from ApolloTab.player import GTPPlayer
-
-player = GTPPlayer()
-player.load("song.gp5")
-
-# Build timeline first
-layouts = player.last_layouts  # or from renderer
-images = player.render_track(0)
-timeline = player.build_timeline(layouts, images, display_width=1200)
-
-# Find measure at specific time (e.g., user clicked at 5000ms)
-info = player.find_measure_at_time(time_ms=5000.0)
-print(f"Global measure: {info['global_meas_idx']}")
-print(f"Local measure: {info['meas_idx']}")
-print(f"Start time: {info['start_time_ms']}ms")
-
-# Or find by scroll position
-info = player.find_measure_at_time(scroll_y=1500.0)
-```
-
----
-
-## Architecture Highlights
-
-### Design Pattern: Timeline Index with Global Namespace
-
-This release demonstrates the **Global Unique Identifier** pattern applied to timeline data structures:
-
-1. **Namespace Isolation**: Each measure gets a globally unique ID independent of its local system context
-2. **Bidirectional Lookup**: The `find_measure_at_time()` method uses `global_meas_idx` for backward scanning within the same measure boundary
-3. **Placeholder Strategy**: Empty measures are represented as first-class timeline citizens (not skipped), ensuring complete coverage of the musical score
-
-### Data Flow
-
-```
-GTPSong → build_timeline() → List[dict] with global_meas_idx
-                                    ↓
-                    find_measure_at_time() → Measure info dict
-                                    ↓
-                    UI click handler → Precise measure定位
-```
+**Rationale**: English is the universal language of music. Guitarists worldwide recognize "Standard", "Drop D", "Open G" etc. This eliminates the need for i18n translation and makes the library more accessible to the global community.
 
 ---
 
@@ -153,41 +63,37 @@ GTPSong → build_timeline() → List[dict] with global_meas_idx
 
 | File | Changes | Lines |
 |------|---------|-------|
-| `ApolloTab/player.py` | **Major**: find_measure_at_time() + empty measure placeholders + global_meas_idx + sentinel fix | **+269 lines** |
-| `pyproject.toml` | Version bump 0.3.8 → 0.3.9 | +1 line |
-| `README.md` | Version/date update | +2 lines |
-| `readme/功能更新.md` | v0.3.9 changelog entry | +27 lines |
-| `release notes.md` | This file | Rewritten |
-| `dist/` | v0.3.9 packages (wheel + source) | Replaced |
+| `ApolloTab/renderer/tab_renderer.py` | Title center alignment + spacing increase; header comment updated | **+4 / -4 lines** |
+| `ApolloTab/models/track.py` | Tuning names English refactor; detailed docstring; header comment updated | **+18 / -7 lines** |
+| `pyproject.toml` | Version bump 0.3.9 → 0.4.0 | +1 line |
+| `README.md` | Version/date update (EN + CN sections) | +2 lines |
+| `readme/功能更新.md` | v0.4.0 changelog entry | +24 lines |
+| `dist/` | v0.4.0 packages (wheel + source) | New |
 
-**Total Net Change**: ~+299 lines of production code
+**Total Net Change**: ~+49 lines (net)
 
 ---
 
 ## Backward Compatibility
 
-Fully Backward Compatible
-- All new fields (`global_meas_idx`) are additive only
-- Existing timeline entries retain all original keys
-- `find_measure_at_time()` is a new method, no existing APIs changed
-- Placeholder entries use `beat_idx: -1` to distinguish from real beat entries
+**Breaking Change (Minor)**: The return value of `get_tuning_name()` has changed from Chinese to English strings. Any code that depends on exact string matching (e.g., `if name == "标准调弦(EADGBE)"`) will need to be updated to use the new English equivalents.
+
+**Non-Breaking**: All rendering output remains visually compatible; only display text content has changed.
 
 ---
 
 ## Testing Recommendations
 
-To validate the v0.3.9 changes:
-
-1. **Empty Measure Test**: Load a song with rest-only measures, verify clicks on those areas position correctly
-2. **Global ID Uniqueness Test**: Verify `global_meas_idx` is strictly increasing with no duplicates across pages
-3. **find_measure_at_time Test**: Call with various `time_ms` values, verify returned measure matches expected location
-4. **Scroll Position Test**: Call with `scroll_y`, verify returned info corresponds to visual position
-5. **Sentinel Test**: Set B loop point at song end, verify it maps to last real measure (not measure 0)
-6. **Cross-Page Measure Test**: Verify measures spanning page boundaries have correct sequential global IDs
-7. **Mixed Content Test**: Song with alternating populated and empty measures, verify all are addressable
-8. **A/B Loop + Empty Measures Test**: Set loop region spanning empty measures, verify correct behavior
-9. **Timeline Completeness Test**: Verify total timeline entry count = sum of all measures (including empty ones)
-10. **Backward Compatibility Test**: Existing code using timeline entries without `global_meas_idx` still works
+1. **Title Centering Test**: Render any song, verify title appears centered in the header area
+2. **Spacing Test**: Verify adequate space between title line and track info line
+3. **Tuning Name Test**: Load songs with various tunings (Standard, Drop D, Open G, custom), verify English names appear in info line
+4. **Custom Tuning Test**: Load a non-standard tuning, verify it shows as "Custom (N strings)"
+5. **Backward Compatibility Test**: If any UI code matches tuning name strings, update to English equivalents
+6. **Multi-page Test**: Render a multi-page song, verify centering works consistently across all pages
+7. **Long Title Test**: Render a song with title >50 chars, verify truncation + centering still work
+8. **Dark Theme Test**: Render with dark theme, verify centered title is readable
+9. **Light Theme Test**: Render with light theme, verify centered title is readable
+10. **Info Line Consistency Test**: Verify "Track Name | Tuning | BPM" format displays correctly with new tuning names
 
 ---
 
@@ -211,7 +117,7 @@ pip install .
 
 ---
 
-**Full Changelog**: View Commit Diff (commit `057d8f4`)
+**Full Changelog**: View Commit Diff (commit `763b021`, based on parent `0ad7e67`)
 
 ---
 
