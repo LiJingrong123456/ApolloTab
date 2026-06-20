@@ -54,7 +54,7 @@
   - PyQt5 (QPixmap, 用于图像渲染)
 
 创建日期: 2026-06-12
-最后更新: 2026-06-14 (v0.3.9: 新增find_measure_at_time方法+空白小节占位修复+全局唯一小节ID)
+最后更新: 2026-06-20 (v0.4.0: 反复记号展开支持/时间线同步/嵌套反复)
 ============================================================
 """
 
@@ -129,6 +129,11 @@ class GTPPlayer:
         self._timeline_times: List[float] = []     # 预提取的时间排序列表(性能优化)
         self._timeline_scroll_ys: List[float] = [] # 预提取的scroll_y排序列表
         self._total_audio_duration_ms: float = 0.0 # 总音频时长(ms)
+
+        # ===== [v0.4.0] 反复记号展开数据 =====
+        # 由 rebuild_audio_events() 计算，build_timeline() 使用
+        # 存储展开后的原始小节索引序列，确保MIDI事件与时间线完全同步
+        self._expanded_measure_indices: List[int] = []  # 展开后的索引序列
         
         # ===== 音频参数 =====
         self._gain = gain
@@ -612,23 +617,38 @@ class GTPPlayer:
     def rebuild_audio_events(self) -> None:
         """
         重新构建 MIDI 事件序列（切换音轨/切换音频模式时调用）
-        
+
         功能:
           根据 audio_mode 决定转换范围:
           - 全轨模式: 转换所有音轨，每轨独立 MIDI 通道
           - 单轨模式: 仅转换当前选中音轨
-          
+          - [v0.4.0] 自动展开反复记号，确保播放顺序正确
+
         流程:
           1. 停止当前播放（如有）
           2. 根据模式选择转换方式
-          3. 为各通道设置乐器音色（吉他/鼓组）
-          4. 重新加载事件到合成器
+          3. [v0.4.0] 计算并缓存反复展开序列（供 build_timeline 同步使用）
+          4. 为各通道设置乐器音色（吉他/鼓组）
+          5. 重新加载事件到合成器
         """
         if not self._song or not self._midi_converter or not self._synth_engine:
             return
         
         # 先停止正在播放的音频
         self._synth_engine.stop()
+        
+        # === [v0.4.0] 计算并缓存反复记号展开序列 ===
+        # 使用当前音轨的小节列表计算展开索引
+        # build_timeline() 会使用相同的序列来同步时间线
+        current_track = self._song.tracks[self._current_track]
+        self._expanded_measure_indices = self._midi_converter.expand_measure_indices(
+            current_track.measures
+        )
+        
+        # 打印展开信息(调试用)
+        if len(self._expanded_measure_indices) != len(current_track.measures):
+            print(f"[GTPPlayer] 反复记号展开: {len(current_track.measures)}小节 → "
+                  f"{len(self._expanded_measure_indices)}个播放位置")
         
         # === 根据模式选择转换方式 ===
         if self._audio_mode == self.MODE_ALL:
@@ -1365,6 +1385,100 @@ class GTPPlayer:
                 self._playhead_timeline.append(sentinel)
                 self._total_audio_duration_ms = sentinel['time_ms']
 
+        # ===== [v0.4.0] 反复记号展开: 同步时间线与MIDI事件 =====
+        # 原理: MIDI事件已按 expand_measure_indices 展开, 时间线也必须同步展开,
+        #       否则播放光标位置会与音频不同步(声音到了第2遍但光标还在第1遍的位置)。
+        #
+        # 实现方式:
+        #   1. 先正常构建基础时间线(每个原始小节出现一次)
+        #   2. 按 global_meas_idx 分组条目
+        #   3. 按展开序列重新排列+复制条目
+        #   4. 复制的条目保持相同 scroll_y(视觉位置不变), time_ms 按 running_time 累加
+        #
+        # 关键: 反复时播放光标会"跳回"之前的 scroll_y 位置(因为反复段视觉上在同一位置),
+        #       但 time_ms 持续增长(反映实际播放进度)。
+        if (self._expanded_measure_indices 
+            and len(self._expanded_measure_indices) > 0):
+            
+            track = self._song.tracks[self._current_track]
+            has_expansion = len(self._expanded_measure_indices) > len(track.measures)
+            
+            if has_expansion and self._playhead_timeline:
+                # Step 1: 建立 measure.number → global_meas_idx 映射
+                # (GTPMeasure.number 是1-based序号, 与track.measures列表索引+1对应)
+                num_to_global = {}
+                for entry in self._playhead_timeline:
+                    gidx = entry.get('global_meas_idx', -1)
+                    midx = entry.get('meas_idx', -1)  # 系统内局部索引(暂时用)
+                    num_to_global.setdefault(gidx, gidx)
+                
+                # 更精确的映射: 遍历原始measures获取 number → global 映射
+                # 因为 build_timeline 的 global_meas_idx 是按渲染顺序递增的,
+                # 而 track.measures 也是按文件顺序排列的, 所以 i → global 映射是一致的
+                idx_to_global = {}
+                tmp_global = 0
+                for i, m in enumerate(track.measures):
+                    idx_to_global[i] = tmp_global
+                    tmp_global += 1
+                
+                # Step 2: 按 global_meas_idx 分组时间线条目
+                groups = {}  # global_meas_idx -> [entries]
+                for entry in self._playhead_timeline:
+                    gidx = entry.get('global_meas_idx', -1)
+                    groups.setdefault(gidx, []).append(entry)
+                
+                # Step 3: 计算每个小节的时长(ms)
+                meas_duration = {}  # global_meas_idx -> 时长
+                for gidx, entries in groups.items():
+                    if len(entries) >= 2:
+                        meas_duration[gidx] = entries[-1]['time_ms'] - entries[0]['time_ms']
+                    elif len(entries) == 1:
+                        meas_duration[gidx] = 100  # 单条目默认100ms
+                    else:
+                        meas_duration[gidx] = 0
+                
+                # Step 4: 按展开序列重建时间线
+                expanded_timeline = []
+                running_time_ms = 0.0  # 累计运行时间(模拟播放器的时间推进)
+                
+                for seq_pos, orig_idx in enumerate(self._expanded_measure_indices):
+                    gidx = idx_to_global.get(orig_idx, orig_idx)
+                    entries = groups.get(gidx, [])
+                    
+                    if not entries:
+                        continue
+                    
+                    # 该小节的时长
+                    seg_dur = meas_duration.get(gidx, 100)
+                    base_time = entries[0]['time_ms']  # 原始起始时间
+                    
+                    # 为该小节的每个拍创建新条目
+                    for entry in entries:
+                        new_entry = dict(entry)
+                        
+                        # 计算相对时间(在该小节内的位置比例 0~1)
+                        rel_pos = 0.0
+                        if seg_dur > 0:
+                            rel_pos = (entry['time_ms'] - base_time) / seg_dur
+                        
+                        # 新绝对时间 = 当前运行时间 + 该小节内的相对偏移
+                        new_entry['time_ms'] = running_time_ms + rel_pos * seg_dur
+                        expanded_timeline.append(new_entry)
+                    
+                    # 运行时间推进一个小节的时长
+                    running_time_ms += seg_dur
+                
+                # Step 5: 替换时间线并更新派生数据
+                if expanded_timeline:
+                    self._playhead_timeline = expanded_timeline
+                    self._total_audio_duration_ms = running_time_ms
+
+        # === 后处理: 预提取bisect关键排序列表 ===
+        # [v0.4.0注意] 展开后的时间线 scroll_y 不再保证单调递增!
+        #   反复段会跳回之前的视觉位置, scroll_y 会回退, 这是正确行为。
+        #   _timeline_times 仍然单调递增(用于 time_to_scroll_pos 的二分查找)。
+        #   _timeline_scroll_ys 可能非单调(用于 scroll_pos_to_time, 反复段内结果可能不精确)。
+        if self._playhead_timeline:
             # === 性能优化: 预提取bisect关键排序列表 ===
             self._timeline_times = [e['time_ms'] for e in self._playhead_timeline]
             self._timeline_scroll_ys = [e['scroll_y'] for e in self._playhead_timeline]

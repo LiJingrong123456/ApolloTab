@@ -5,13 +5,16 @@
 功能描述: GTP歌曲数据 → MIDI事件序列转换器
          将 GTPSong 数据模型转换为带时间戳的 MIDI 事件列表，
          用于驱动 FluidSynth 合成器进行音频播放
+         [v0.4.0] 新增反复记号(Repeat Signs)展开支持，含嵌套反复
 
 创建日期: 2026-06-07
+最后更新: 2026-06-20 (v0.4.0: 反复记号展开/嵌套反复/时间线同步)
 依赖: Python 3.8+ dataclasses, gtp_engine.models
-设计原则: 
+设计原则:
   - 时间精度: 使用 tick(脉冲)作为最小时间单位，避免浮点累积误差
   - 标准MIDI格式: 兼容标准 MIDI 事件(note_on/note_off/tempo)
   - 可扩展: 支持未来添加控制变化/弯音轮等事件
+  - 反复展开: 基于栈结构处理嵌套反复记号，确保MIDI与时间线同步
 
 调用示例:
     from gtp_engine.audio.midi_converter import MidiConverter
@@ -19,6 +22,21 @@
     events = converter.convert(song, track_index=0)
     for evt in events:
         print(f"tick={evt.time}: {evt.type} ch={evt.channel} pitch={evt.pitch} vel={evt.velocity}")
+
+反复记号展开原理:
+  Guitar Pro 文件中的反复记号(||: 和 :||)在播放时需要重复对应的小节段。
+  本模块使用基于栈的展开算法将带反复记号的线性小节序列展开为实际播放顺序。
+
+  示例（简单反复）:
+    原始小节: [A] [||:B] [C] [:||2] [D]
+    展开序列: [A, B, C, B, C, D]   (B-C段重复2次, 首次+1次重复)
+
+  示例（嵌套反复）:
+    原始小节: [A] [||:B] [||:C] [D][:||2] [E][:||2] [F]
+    展开序列: [A, B, C, D, C, D, E, B, C, D, C, D, E, F]
+              (内层C-D重复2次, 外层B到E整体重复2次)
+
+  算法复杂度: O(n × k), n=原始小节数, k=平均反复次数
 ============================================================
 """
 
@@ -100,40 +118,109 @@ class MidiConverter:
     def __init__(self, ticks_per_beat: int = None):
         """
         初始化转换器
-        
+
         参数:
             ticks_per_beat: 自定义每拍tick数(None=使用默认480)
         """
         self.ticks_per_beat = ticks_per_beat or self.TICKS_PER_BEAT
+
+    # ================================================================
+    # 反复记号展开 (Repeat Signs Expansion)
+    # ================================================================
+
+    @staticmethod
+    def expand_measure_indices(measures: list) -> List[int]:
+        """
+        将带反复记号的小节列表展开为实际播放顺序的索引序列
+
+        原理:
+          使用栈(Stack)数据结构处理嵌套反复记号:
+          1. 遍历每个小节，将索引追加到结果列表
+          2. 遇到 is_repeat_open=True → 将当前位置压入栈（记录反复起点）
+          3. 遇到 repeat_close > 0 → 弹出最近的open位置，将该段复制 (repeat_close-1) 次
+             (repeat_close值表示总重复次数, 首次已播过, 故需额外 repeat_close-1 次)
+
+        嵌套支持:
+          栈结构天然支持嵌套: 内层close先弹出内层open, 外层close再弹外层open。
+          外层复制时自动包含内层已展开的内容。
+
+        参数:
+            measures: GTPMeasure 对象列表（需有 is_repeat_open 和 repeat_close 属性）
+
+        返回:
+            List[int]: 展开后的原始小节索引序列
+              例如 [0,1,2,1,2,3] 表示第0小节→第1小节→第2小节→回到第1小节→...
+
+        示例:
+          简单反复 ||: A B :||2 C
+          → 输入: [A(open), B, C(close=2), D]
+          → 输出: [0, 1, 0, 1, 3]  (A-B段播放2次后继续D)
+
+          嵌套反复 ||: A ||: B C :||2 D :||2 E
+          → 输出: [0, 1, 2, 3, 2, 3, 4, 1, 2, 3, 2, 3, 4, 5]
+
+        调用来源:
+          - MidiConverter.convert(): 单轨MIDI转换时使用
+          - MidiConverter.convert_all_tracks(): 多轨并轨时使用
+          - GTPPlayer.build_timeline(): 时间线构建时同步使用
+        """
+        result: List[int] = []       # 展开后的索引序列
+        stack: List[int] = []         # 反复起点栈(存储result中的位置)
+
+        for idx, measure in enumerate(measures):
+            # === 步骤1: 将当前小节加入结果 ===
+            result.append(idx)
+
+            # === 步骤2: 检查反复起始记号(||:) ===
+            if measure.is_repeat_open:
+                # 记录当前result位置(指向刚加入的这个小节)
+                stack.append(len(result) - 1)
+
+            # === 步骤3: 检查反复结束记号(:||n) ===
+            if measure.repeat_close > 0 and stack:
+                # 弹出匹配的反复起点
+                start_pos = stack.pop()
+
+                # 提取需要重复的片段(从起点到当前末尾)
+                segment = result[start_pos:]
+
+                # 复制 (repeat_close - 1) 次
+                # repeat_close=总次数, 首次已播, 故额外 repeat_close-1 次
+                extra_repeats = measure.repeat_close - 1
+                for _ in range(max(0, extra_repeats)):
+                    result.extend(segment)
+
+        return result
     
     def convert(self, song, track_index: int = 0) -> List[MidiEvent]:
         """
         将 GTPSong 的指定音轨转换为 MIDI 事件序列
-        
+
         参数:
             song:         GTPSong 歌曲数据对象
             track_index:  要转换的音轨索引(0-based)
-        
+
         返回:
             List[MidiEvent]: 按时间排序的 MIDI 事件列表
-        
+
         执行步骤:
           1. 验证输入参数有效性
           2. 在 tick=0 处插入 tempo 事件(BPM)
-          3. 遍历每个小节→每个拍→每个音符，计算绝对 tick 位置
-          4. 为每个非休止符音符生成 note_on + note_off 事件对
-          5. 按时间排序返回完整事件列表
+          3. [v0.4.0] 展开反复记号获取实际播放顺序
+          4. 按展开顺序遍历小节→每个拍→每个音符，计算绝对 tick 位置
+          5. 为每个非休止符音符生成 note_on + note_off 事件对
+          6. 按时间排序返回完整事件列表
         """
         events: List[MidiEvent] = []
-        
+
         # === 参数验证 ===
         if not song or not song.tracks:
             return events
         if track_index < 0 or track_index >= len(song.tracks):
             return events
-        
+
         track = song.tracks[track_index]
-        
+
         # === Step 1: 插入 tempo 事件(歌曲开头的速度标记) ===
         events.append(MidiEvent(
             time=0,
@@ -143,23 +230,27 @@ class MidiConverter:
             velocity=song.tempo,
             value=song.tempo
         ))
-        
-        # === Step 2: 遍历所有小节和拍，生成音符事件 ===
+
+        # === Step 2: [v0.4.0] 展开反复记号，获取实际播放顺序 ===
+        expanded_indices = self.expand_measure_indices(track.measures)
+
+        # === Step 3: 按展开顺序遍历小节，生成音符事件 ===
         current_tick = 0  # 当前绝对 tick 位置（从歌曲开头开始累加）
-        
-        for measure in track.measures:
+
+        for orig_idx in expanded_indices:
+            measure = track.measures[orig_idx]
             measure_events = self._convert_measure(
                 measure, current_tick, self.GUITAR_CHANNEL
             )
             events.extend(measure_events)
-            
+
             # 当前小节结束，累加小节总时长到 current_tick
             measure_ticks = self._measure_to_ticks(measure)
             current_tick += measure_ticks
-        
-        # === Step 3: 按 time 排序确保时序正确 ===
+
+        # === Step 4: 按 time 排序确保时序正确 ===
         events.sort(key=lambda e: (e.time, 0 if e.type == "note_on" else 1))
-        
+
         return events
     
     @staticmethod
@@ -214,35 +305,36 @@ class MidiConverter:
     def convert_all_tracks(self, song) -> Tuple[List[MidiEvent], List[int]]:
         """
         转换歌曲所有音轨为合并的 MIDI 事件序列（并轨模式）
-        
+
         原理:
           遍历 GTPSong 中所有音轨，每个音轨分配独立的 MIDI 通道，
           将所有音轨的音符事件合并到一个列表中按时间排序。
           这样播放时所有音轨同时发声，实现"乐队合奏"效果。
-        
+          [v0.4.0] 每个音轨独立展开反复记号（不同音轨可能有不同的反复结构）。
+
         通道分配规则:
           - 音轨0 → MIDI通道0
           - 音轨1 → MIDI通道1
           - ...以此类推，最多支持16个音轨(通道0-15)
           - 超过16个音轨时循环使用通道(取模)
-        
+
         参数:
             song: GTPSong 歌曲数据对象
-        
+
         返回:
             Tuple[events, track_channels]:
               - events: 合并后的全部MIDI事件列表(已排序)
               - track_channels: 每个音轨对应的MIDI通道号列表
-        
+
         使用场景:
           全轨并轨播放模式 - 用户想听到完整乐队效果而非单轨独奏
         """
         all_events: List[MidiEvent] = []
         track_channels: List[int] = []
-        
+
         if not song or not song.tracks:
             return all_events, track_channels
-        
+
         # 只在开头插入一次 tempo 事件（避免重复）
         all_events.append(MidiEvent(
             time=0,
@@ -252,37 +344,41 @@ class MidiConverter:
             velocity=0,
             value=song.tempo
         ))
-        
+
         # 遍历每个音轨，各自转换后合并
         # 通道分配规则:
         #   - 鼓轨(检测到) → 固定分配通道9(MIDI打击乐保留通道)
         #   - 旋律轨 → 从可用通道中循环分配(0-8, 10-15，跳过通道9)
         _melody_channels = [c for c in range(16) if c != self.PERCUSSION_CHANNEL]
         _melody_idx = 0  # 旋律轨通道计数器
-        
+
         for track_idx, track in enumerate(song.tracks):
+            # === [v0.4.0] 每个音轨独立展开反复记号 ===
+            expanded_indices = self.expand_measure_indices(track.measures)
+
             # === 鼓轨检测与通道分配 ===
             if self.is_drum_track(track):
                 ch = self.PERCUSSION_CHANNEL  # 鼓轨固定使用通道9
             else:
                 ch = _melody_channels[_melody_idx % len(_melody_channels)]
                 _melody_idx += 1
-            
+
             track_channels.append(ch)
-            
-            # 复用 convert 的逻辑但指定该轨道的通道
+
+            # 按展开顺序转换该音轨的所有小节
             current_tick = 0
-            for measure in track.measures:
+            for orig_idx in expanded_indices:
+                measure = track.measures[orig_idx]
                 measure_events = self._convert_measure(
                     measure, current_tick, ch
                 )
                 all_events.extend(measure_events)
                 measure_ticks = self._measure_to_ticks(measure)
                 current_tick += measure_ticks
-        
+
         # 全局排序：所有轨道的事件按时间统一排序
         all_events.sort(key=lambda e: (e.time, 0 if e.type == "note_on" else 1))
-        
+
         return all_events, track_channels
     
     def get_all_tracks_duration_ms(self, song) -> float:
