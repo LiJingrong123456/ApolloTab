@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: ApolloTab
-Version: 0.5.0
+Version: 0.5.1
 Summary: Guitar Pro file parsing, rendering, and audio playback engine library
 Author: ZhuWenqian
 Maintainer: ZhuWenqian
@@ -25,12 +25,10 @@ Classifier: Typing :: Typed
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 License-File: LICENSE
-Requires-Dist: pyguitarpro>=0.11
-Requires-Dist: PyQt5>=5.15
+Requires-Dist: pyguitarpro>=0.10.1
 Requires-Dist: pyfluidsynth>=1.4.0
 Provides-Extra: full
-Requires-Dist: pyguitarpro>=0.11; extra == "full"
-Requires-Dist: PyQt5>=5.15; extra == "full"
+Requires-Dist: pyguitarpro>=0.10.1; extra == "full"
 Requires-Dist: pyfluidsynth>=1.4.0; extra == "full"
 Provides-Extra: dev
 Requires-Dist: pytest>=7.0; extra == "dev"
@@ -505,7 +503,7 @@ Issues and Pull Requests are welcome!
 
 ***
 
-**Version**: v0.5.0
+**Version**: v0.5.1
 **Last Updated**: 2026-06-20
 **Compatibility**: Windows / Linux / macOS (Python 3.8+)
 
@@ -998,6 +996,6 @@ mypy ApolloTab/
 
 ***
 
-**版本**: v0.5.0
+**版本**: v0.5.1
 **最后更新**: 2026-06-20
 **兼容性**: Windows / Linux / macOS (Python 3.8+)

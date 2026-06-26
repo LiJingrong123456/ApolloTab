@@ -1,5 +1,4 @@
-pyguitarpro>=0.11
-PyQt5>=5.15
+pyguitarpro>=0.10.1
 pyfluidsynth>=1.4.0
 
 [dev]
@@ -12,6 +11,5 @@ build>=0.10
 twine>=4.0
 
 [full]
-pyguitarpro>=0.11
-PyQt5>=5.15
+pyguitarpro>=0.10.1
 pyfluidsynth>=1.4.0
