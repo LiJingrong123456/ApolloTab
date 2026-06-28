@@ -1,3 +1,54 @@
+# ApolloTab v1.0.1 - Release Notes
+
+**Release Date**: June 28, 2026
+**Commits**: `fa4d8f3` (GP7/GP8 support) + `588a72c` (Bank/Program Change)
+**Author**: Zhu Wenqian
+
+---
+
+## Overview
+
+ApolloTab v1.0.1 is a **major milestone release** (Phase 5) that introduces **native GP7/GP8 (.gp) file support** and **MIDI bank/program change support** for professional audio playback.
+
+### New Feature 1: GP7/GP8 (.gp) Native Support
+
+Guitar Pro 7/8 introduced a completely new file format (`.gp`) based on ZIP packaging with GPIF XML content. ApolloTab now supports this format natively:
+
+- **Parser chain** (based on alphaTab algorithm):
+  - `gp7_parser.py`: ZIP unpacking, file stream reading, Score.gpif extraction
+  - `gpif_parser.py`: Full GPIF XML parser (~1500 lines) covering Tracks, Measures, Beats, Notes, Effects, Automation, etc.
+  - `binary_stylesheet.py`: Binary stylesheet parsing for visual layout
+  - `part_configuration.py`: Part configuration parsing
+- **Smart dispatch**: `parse_score(filepath)` automatically selects the correct parser based on file extension (.gp3/.gp4/.gp5/.gpx/.gp)
+- **Extended data models**: Track/Measure/Beat/Note/Song all gain GP7/GP8-specific fields (clef, key signature, marker, stroke direction, grace notes, harmonic, dead note, etc.)
+- **RenderMode enum**: Added in `utils/constants.py` for multi-staff rendering mode (reserved for future GP7/GP8 multi-staff support)
+
+### New Feature 2: MIDI Bank Select & Program Change
+
+Professional playback now supports proper sound bank selection:
+
+- **Bank Select (CC0 + CC32)**: Automatically sent before Program Change to select the correct sound bank
+- **Program Change**: Changes instrument/program for each track
+- **Event ordering**: CC/Program Change events are sorted to occur **before** note events, ensuring correct tone loading
+- **Parser integration**: `gpif_parser.py` parses `master_banks` and `tracks_banks` from GP7/GP8 files
+- **Synth engine**: `synth_engine.py` `_play_event()` now handles `control_change` and `program_change` event types
+
+### Modified Files
+| File | Change |
+|------|--------|
+| `__init__.py` | Expose GP7/GP8 new API |
+| `parser/gp7_parser.py` | New: ZIP unpack + file stream reader |
+| `parser/gpif_parser.py` | New: Full GPIF XML parser |
+| `parser/binary_stylesheet.py` | New: Binary stylesheet parser |
+| `parser/part_configuration.py` | New: Part configuration parser |
+| `parser/__init__.py` | New: Smart dispatch `parse_score()` |
+| `models/*.py` | Extended: GP7/GP8-specific fields |
+| `utils/constants.py` | New: `RenderMode` enum |
+| `audio/midi_converter.py` | New: Bank Select + Program Change event generation & sorting |
+| `audio/synth_engine.py` | Extended: CC/Program Change playback support |
+
+---
+
 # ApolloTab v0.5.0 - Release Notes
 
 **Release Date**: June 20, 2026
