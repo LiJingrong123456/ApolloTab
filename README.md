@@ -1,7 +1,7 @@
 # ApolloTab
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-orange.svg)](https://opensource.org/licenses/MPL-2.0/)
+[![License: LGPL 2.1](https://img.shields.io/badge/License-LGPL-2.1-orange.svg)](https://opensource.org/licenses/LGPL-2.1/)
 [![PyPI version](https://badge.fury.io/py/ApolloTab.svg)](https://pypi.org/project/ApolloTab/)
 
 **Guitar Pro File Parsing, Rendering, and Audio Playback Engine Library**
