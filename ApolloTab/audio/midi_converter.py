@@ -6,9 +6,10 @@
          将 GTPSong 数据模型转换为带时间戳的 MIDI 事件列表，
          用于驱动 FluidSynth 合成器进行音频播放
          [v0.4.0] 新增反复记号(Repeat Signs)展开支持，含嵌套反复
+         [v0.4.1] 兼容 GP7/GP8 新字段(打击乐/力度/连音/重音)
 
 创建日期: 2026-06-07
-最后更新: 2026-06-20 (v0.4.0: 反复记号展开/嵌套反复/时间线同步)
+最后更新: 2026-06-28 (v0.4.1: 兼容 GP7/GP8 新字段)
 依赖: Python 3.8+ dataclasses, gtp_engine.models
 设计原则:
   - 时间精度: 使用 tick(脉冲)作为最小时间单位，避免浮点累积误差
@@ -37,6 +38,13 @@
               (内层C-D重复2次, 外层B到E整体重复2次)
 
   算法复杂度: O(n × k), n=原始小节数, k=平均反复次数
+
+GP7/GP8 兼容性 (v0.4.1):
+  - 鼓轨识别: 优先检查 track.is_percussion 字段，再回退到名称匹配
+  - 力度映射: beat.dynamics 字段(PPP/PP/P/MP/MF/F/FF/FFF) → MIDI velocity
+  - 连音时值: beat.tuplet_numerator/denominator 修正实际时长
+  - 重音类型: note.accentuated_type (1=Normal, 2=Heavy) 调整力度
+  - 打击乐音高: note.is_percussion + percussion_articulation 直接作为 MIDI 音高
 ============================================================
 """
 
@@ -111,9 +119,28 @@ class MidiConverter:
     # GM标准鼓音映射范围: MIDI note 35-81 对应不同鼓/镲音色
     # 常用值: 36=底鼓, 38/40=军鼓, 42=闭镲, 44=开镲, 49=碎镲, 51=吊镲
     DRUM_NOTE_RANGE = (35, 82)
-    
+
     # 鼓轨识别关键词(轨道名称匹配)
     DRUM_KEYWORDS = ('drum', 'percussion', 'drums', 'perc', '鼓')
+
+    # GP7/GP8 力度标记(Dynamics) → MIDI velocity 映射表 (v0.4.1 新增)
+    # 调整效果: 修改此表可改变 GP7/GP8 文件的力度解析基准值
+    # 来源: alphaTab Dynamic 枚举值 (与 GP7/GP8 GPIF XML <Dynamic> 节点对应)
+    DYNAMICS_TO_VELOCITY = {
+        'PPP': 15,   # pianississimo (极弱) - 几乎无声
+        'PP': 31,    # pianissimo (很弱)
+        'P': 47,     # piano (弱)
+        'MP': 63,    # mezzo-piano (中弱)
+        'MF': 79,    # mezzo-forte (中强) - 默认力度
+        'F': 95,     # forte (强)
+        'FF': 111,   # fortissimo (很强)
+        'FFF': 127,  # fortississimo (极强) - 最大力度
+    }
+
+    # GP7/GP8 重音类型常量 (v0.4.1 新增)
+    # 来源: alphaTab AccentType 枚举 (GP7 GPIF <Accent> 节点 bit flag)
+    ACCENT_NORMAL = 1   # 普通重音 (Normal Accent) → 力度 +15
+    ACCENT_HEAVY = 2    # 强重音 (Heavy Accent) → 力度 +25
     
     def __init__(self, ticks_per_beat: int = None):
         """
@@ -257,25 +284,33 @@ class MidiConverter:
     def is_drum_track(track) -> bool:
         """
         检测一个音轨是否为鼓轨(打击乐轨道)
-        
+
         检测策略(按优先级):
-          1. 名称匹配: 轨道名称包含 drum/percussion/鼓 等关键词
-          2. 音符特征: 鼓轨的音符特征是 fret == midi_pitch
+          1. [v0.4.1] GP7/GP8 显式标记: track.is_percussion 字段
+             (GP7 GPIF XML 中 <DrumKit> 节点设置，最权威的鼓轨判定)
+          2. 名称匹配: 轨道名称包含 drum/percussion/鼓 等关键词
+          3. 音符特征: 鼓轨的音符特征是 fret == midi_pitch
              （因为鼓轨不使用弦/品格系统，直接存储MIDI鼓音编号）
              且所有音符的pitch都在GM鼓音范围(35-81)内
-        
+
         参数:
             track: GTPTrack 音轨对象
-        
+
         返回:
             True=是鼓轨, False=普通旋律轨
         """
-        # === 策略1: 名称匹配 ===
+        # === 策略1: [v0.4.1] GP7/GP8 is_percussion 显式标记 ===
+        # GP7/GP8 文件在 GPIF XML 中通过 <DrumKit> 节点显式标记鼓轨
+        # 这是权威判定，应优先于名称/特征匹配
+        if getattr(track, 'is_percussion', False):
+            return True
+
+        # === 策略2: 名称匹配 ===
         name_lower = track.name.lower()
         if any(kw in name_lower for kw in MidiConverter.DRUM_KEYWORDS):
             return True
         
-        # === 策略2: 音符特征检测 ===
+        # === 策略3: 音符特征检测 ===
         # 鼓轨关键特征: fret == midi_pitch (鼓音直接存为MIDI编号，非品格计算值)
         #              且 pitch 在 GM 鼓音范围(35-81)
         sample_notes = []
@@ -435,7 +470,17 @@ class MidiConverter:
                     continue
                 
                 # === 计算力度(velocity) ===
-                velocity = self._calculate_velocity(note)
+                # [v0.4.1] 传入 beat 以支持 GP7/GP8 dynamics 力度标记
+                velocity = self._calculate_velocity(note, beat)
+
+                # === [v0.4.1] 计算实际 MIDI 音高 ===
+                # GP7/GP8 打击乐音符: 使用 percussion_articulation 作为 MIDI 音高
+                # (鼓轨每个 articulation 编号对应 GM 标准鼓音，如 36=底鼓, 38=军鼓)
+                # 普通音符: 使用 note.midi_pitch (弦+品+调弦计算得出)
+                if getattr(note, 'is_percussion', False) and note.percussion_articulation >= 0:
+                    effective_pitch = note.percussion_articulation
+                else:
+                    effective_pitch = note.midi_pitch
                 
                 # === 计算实际时长(考虑断奏等技巧) ===
                 actual_duration = beat_ticks
@@ -477,7 +522,7 @@ class MidiConverter:
                     time=beat_tick,
                     type="note_on",
                     channel=channel,
-                    pitch=note.midi_pitch,
+                    pitch=effective_pitch,  # [v0.4.1] 打击乐用 articulation, 旋律用 midi_pitch
                     velocity=velocity
                 ))
                 
@@ -505,7 +550,7 @@ class MidiConverter:
                     time=beat_tick + actual_duration,
                     type="note_off",
                     channel=channel,
-                    pitch=note.midi_pitch,
+                    pitch=effective_pitch,  # [v0.4.1] 必须与 note_on 的 pitch 一致
                     velocity=0  # note_off 的 velocity 固定为0
                 ))
             
@@ -681,28 +726,30 @@ class MidiConverter:
     def _beat_duration_to_ticks(self, beat) -> int:
         """
         将拍的时值转换为 tick 数
-        
+
+        [v0.4.1] 复用 beat.duration_value 属性，自动支持连音(Tuplet)时值修正
+                避免在此重复实现附点/连音逻辑(DRY 原则)
+
         参数:
             beat: GTPBeat 对象
-        
+
         返回:
             该拍的时长(以 tick 为单位)
-        
+
         计算公式:
-          ticks = TICKS_PER_BEAT × DURATION_RATIO[duration.value]
-                 × (1.5 if is_dotted else 1.0)
-        
+          ticks = TICKS_PER_BEAT × beat.duration_value
+          其中 duration_value 已包含附点(is_dotted)和连音(tuplet)修正
+
         示例:
-          四分音符 → 480 ticks
-          八分音符 → 240 ticks
-          附点四分 → 720 ticks
+          四分音符       → 480 ticks (480 × 1.0)
+          八分音符       → 240 ticks (480 × 0.5)
+          附点四分       → 720 ticks (480 × 1.5)
+          三连音(八分)   → 160 ticks (480 × 0.5 × 2/3)
+          五连音(四分)   → 384 ticks (480 × 1.0 × 4/5)
         """
-        from ..utils.constants import DURATION_RATIO, DOTTED_MULTIPLIER
-        
-        base_ratio = DURATION_RATIO.get(beat.duration.value, 1.0)
-        ticks = int(self.ticks_per_beat * base_ratio)
-        if beat.is_dotted:
-            ticks = int(ticks * DOTTED_MULTIPLIER)
+        # 复用 GTPBeat.duration_value 属性(已实现附点+连音修正)
+        # 这样修改附点/连音逻辑只需改一处，保证一致性
+        ticks = int(self.ticks_per_beat * beat.duration_value)
         return max(ticks, 1)  # 最少1 tick，防止除零
     
     def _measure_to_ticks(self, measure) -> int:
@@ -715,31 +762,54 @@ class MidiConverter:
         numerator, denominator = measure.time_signature
         return int(numerator * self.ticks_per_beat * 4.0 / denominator)
     
-    def _calculate_velocity(self, note) -> int:
+    def _calculate_velocity(self, note, beat=None) -> int:
         """
         根据音符属性计算实际演奏力度
-        
-        规则:
-          - 幽灵音(Ghost Note): 降低力度到 60 (弱声)
-          - 正常音符: 使用原始 velocity (默认95)
-          - 重音(Accentuated): 提升力度到 120 (接近最强127)
-        
+
+        [v0.4.1] GP7/GP8 兼容:
+          - beat.dynamics 字段(PPP/PP/P/MP/MF/F/FF/FFF) → MIDI velocity 基础值
+          - note.accentuated_type (1=Normal, 2=Heavy) 调整力度增量
+
+        规则(按优先级):
+          1. 基础力度确定:
+             - [v0.4.1] GP7/GP8: beat.dynamics 存在时，使用 DYNAMICS_TO_VELOCITY 映射
+             - GP3-5 路径: 使用 note.velocity (默认95=mf中强)
+          2. 幽灵音(Ghost Note): 力度上限降到 60 (弱声)
+          3. 重音提升力度:
+             - [v0.4.1] accentuated_type=1 (Normal) → +15
+             - [v0.4.1] accentuated_type=2 (Heavy)  → +25
+             - GP3-5 兼容: TechniqueType.ACCENTUATED → +25 (等同 Heavy)
+
         参数:
             note: GTPNote 音符对象
-        
+            beat: GTPBeat 拍对象(可选，用于 GP7/GP8 dynamics 力度解析)
+
         返回:
             实际力度值 (0-127)
         """
-        base_vel = note.velocity
-        
-        # 幽灵音降低力度
+        # === 步骤1: 确定基础力度 ===
+        # [v0.4.1] GP7/GP8: 优先使用 beat.dynamics 力度标记
+        if beat is not None and getattr(beat, 'dynamics', None):
+            base_vel = self.DYNAMICS_TO_VELOCITY.get(beat.dynamics, note.velocity)
+        else:
+            # GP3-5 路径或 GP7/GP8 无 dynamics 标记时使用音符自带力度
+            base_vel = note.velocity
+
+        # === 步骤2: 幽灵音降低力度 ===
         if note.is_ghost or TechniqueType.GHOST_NOTE in note.techniques:
             base_vel = min(base_vel, 60)
-        
-        # 重音提升力度
-        if TechniqueType.ACCENTUATED in note.techniques:
+
+        # === 步骤3: 重音提升力度 ===
+        # [v0.4.1] GP7/GP8: accentuated_type 字段优先
+        accent_type = getattr(note, 'accentuated_type', 0)
+        if accent_type == self.ACCENT_HEAVY:
+            base_vel = min(base_vel + 25, 127)   # Heavy Accent: 强重音 +25
+        elif accent_type == self.ACCENT_NORMAL:
+            base_vel = min(base_vel + 15, 127)   # Normal Accent: 普通重音 +15
+        elif TechniqueType.ACCENTUATED in note.techniques:
+            # GP3-5 兼容路径: 技巧列表中的重音视为 Heavy(等同旧逻辑 +25)
             base_vel = min(base_vel + 25, 127)
-        
+
         # 确保在合法范围内
         return max(0, min(127, base_vel))
     

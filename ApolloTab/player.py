@@ -10,7 +10,7 @@
   使主程序只需调用简单方法即可实现完整的 GTP 播放功能。
 
 核心职责:
-  1. 文件加载与解析 (parse_gtp)
+  1. 文件加载与解析 (parse_score 智能调度，支持 GP3-5 和 GP7/GP8)
   2. 音轨渲染 (TabRenderer.render_from_file)
   3. 音频引擎管理 (SynthEngine + MidiConverter)
   4. 播放光标时间线构建 (time_ms ↔ scroll_y 映射)
@@ -24,11 +24,11 @@
 
 使用示例:
     from gtp_engine.player import GTPPlayer
-    
+
     # 创建播放器实例
     player = GTPPlayer()
-    
-    # 加载并渲染
+
+    # 加载并渲染 (支持 .gp3/.gp4/.gp5/.gpx/.gtp/.gp)
     player.load("song.gp5")
     images = player.render_track(0)  # 渲染第1轨
     
@@ -47,14 +47,14 @@
     player.shutdown()
 
 依赖库:
-  - gtp_engine.parser (parse_gtp, GTPParser)
+  - gtp_engine.parser (parse_score 智能调度, parse_gtp, GTPParser, GP7Parser)
   - gtp_engine.renderer (TabRenderer, RenderConfig)
   - gtp_engine.audio (MidiConverter, SynthEngine)
   - gtp_engine.models (GTPSong, GTPTrack)
   - PyQt5 (QPixmap, 用于图像渲染)
 
 创建日期: 2026-06-12
-最后更新: 2026-06-20 (v0.4.0: 反复记号展开支持/时间线同步/嵌套反复)
+最后更新: 2026-06-28 (v0.4.1: GP7/GP8 (.gp) 文件支持，通过 parse_score 智能调度)
 ============================================================
 """
 
@@ -64,7 +64,7 @@ from typing import List, Optional, Tuple, Dict, Callable
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont
 
 # 内部模块导入
-from .parser import parse_gtp, GTPParser
+from .parser import parse_gtp, parse_score, GTPParser
 from .renderer import TabRenderer
 from .utils import RenderConfig
 from .audio import MidiConverter, MidiEvent, SynthEngine
@@ -230,25 +230,32 @@ class GTPPlayer:
     def load(self, file_path: str) -> GTPSong:
         """
         加载并解析 Guitar Pro 文件
-        
+
+        [v0.4.1] 支持 GP7/GP8 (.gp) 文件，通过 parse_score 智能调度
+
         参数:
-            file_path: .gp3/.gp4/.gp5/.gpx 文件路径
-            
+            file_path: .gp3/.gp4/.gp5/.gpx/.gtp/.gp 文件路径
+
         返回:
             GTPSong 歌曲对象
-            
+
         异常:
             GPException: 文件格式错误或无法解析时抛出
             ImportError: 缺少 pyguitarpro 依赖时抛出
             FileNotFoundError: 文件不存在时抛出
-            
+
         示例:
             >>> player = GTPPlayer()
             >>> song = player.load("my_song.gp5")
             >>> print(f"标题: {song.title}, 音轨数: {player.track_count}")
+            >>> # GP7/GP8 文件
+            >>> song = player.load("new_song.gp")
         """
         self._file_path = file_path
-        self._song = parse_gtp(file_path)
+        # [v0.4.1] 使用 parse_score 智能调度器，根据扩展名自动选择解析器
+        # .gp3/.gp4/.gp5/.gpx/.gtp → GTPParser (PyGuitarPro)
+        # .gp (GP7/GP8)            → GP7Parser (原生 ZIP+GPIF 解析)
+        self._song = parse_score(file_path)
         self._current_track = 0
         return self._song
     

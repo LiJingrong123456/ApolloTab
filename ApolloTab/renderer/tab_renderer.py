@@ -28,12 +28,19 @@
   - _draw_technique_marks(): 技巧标记分发器，按类型调用对应绘制方法
   - _draw_dashed_extension_line(): P.M./Let Ring GP5格式虚线(strict参数控制断开策略)
 
+渲染模式扩展接口 (v0.4.0 新增):
+  - render_mode: RenderMode 枚举，控制渲染哪些谱表
+  - _draw_standard_notation(): 五线谱渲染钩子(预留，子类重写)
+  - _draw_numbered_notation(): 简谱渲染钩子(预留，子类重写)
+  - _draw_slash_notation():    斜线谱渲染钩子(预留，子类重写)
+  当前版本仅实现 TAB_ONLY 模式，其他模式需通过子类扩展
+
 依赖库:
   - PyQt5 (QPainter, QPixmap, QFont, QPen, QColor, QPainterPath等)
   - 内部依赖: gtp_engine.models.*, layout_engine.*, utils.constants
 
 创建日期: 2026-06-06
-最后更新: 2026-06-18 (v0.2.9: 标题居中显示+行距增大)
+最后更新: 2026-06-28 (v0.4.0: 新增 RenderMode 渲染模式扩展接口)
 ============================================================
 """
 
@@ -49,12 +56,13 @@ from PyQt5.QtCore import Qt, QRect, QPoint, QSize
 from ..models.track import GTPTrack
 from ..models.song import GTPSong
 from .layout_engine import (
-    TabLayoutEngine, PageLayout, SystemLayout, 
+    TabLayoutEngine, PageLayout, SystemLayout,
     MeasureLayout, BeatLayout
 )
 from ..utils.constants import (
     RenderConfig, TechniqueType, TECHNIQUE_ABBREVIATION,
-    NoteDuration, DURATION_RATIO, get_string_name
+    NoteDuration, DURATION_RATIO, get_string_name,
+    RenderMode,  # v0.4.0新增: 渲染模式枚举
 )
 
 
@@ -90,6 +98,10 @@ class TabRenderer:
         # 上次渲染的布局数据(由render()自动填充)
         # 类型: List[PageLayout], 每页包含SystemLayout→MeasureLayout→BeatLayout坐标
         self.last_layouts: list = []
+        # 渲染模式(v0.4.0新增) - 控制渲染哪些谱表
+        # 调整效果: 设为 RenderMode.TAB_ONLY 仅渲染六线谱(当前唯一支持)
+        #           其他模式需通过子类重写 _draw_standard_notation 等钩子方法实现
+        self.render_mode: RenderMode = RenderMode.TAB_ONLY
     
     def set_theme(self, theme) -> None:
         """
@@ -236,20 +248,93 @@ class TabRenderer:
                          page_width: int = None, page_height: int = None) -> List[QPixmap]:
         """
         便捷方法：从文件路径直接渲染（解析+渲染一步完成）
-        
+
         参数:
-            file_path:    .gp3/.gp4/.gp5/.gpx 文件路径
+            file_path:    .gp3/.gp4/.gp5/.gpx/.gp 文件路径
+                          v0.4.0新增: 支持 .gp (GP7/GP8) 文件
             track_index:  要渲染的音轨索引（默认0=第一条）
             page_width:   每页宽度(px)，None则用配置默认值
             page_height:  每页高度(px)，None则用配置默认值
-            
+
         返回:
             QPixmap列表，每元素对应一页乐谱图像
         """
-        from ..parser.gtp_parser import parse_gtp
-        song = parse_gtp(file_path)
+        from ..parser import parse_score
+        song = parse_score(file_path)
         return self.render(song, track_index=track_index,
                           page_width=page_width, page_height=page_height)
+
+    # ============================================================
+    # 渲染模式扩展钩子方法 (v0.4.0 新增)
+    # ============================================================
+    # 以下方法为预留接口，当前版本为空实现。
+    # 子类可通过重写这些方法实现五线谱/简谱/斜线谱的渲染。
+    # 主渲染流程会在 _draw_system 中根据 self.render_mode 调用对应钩子。
+
+    def _draw_standard_notation(self, painter: QPainter, track: GTPTrack,
+                                 system: SystemLayout) -> None:
+        """
+        五线谱渲染钩子（预留接口，v0.4.0 新增）
+
+        功能:
+          在六线谱上方/下方绘制五线谱(标准乐谱)。
+          当前版本为空实现，需通过子类重写来启用。
+
+        参数:
+            painter: QPainter 绘图对象
+            track:   GTPTrack 音轨数据
+            system:  SystemLayout 系统布局(含坐标信息)
+
+        扩展示例:
+            class ExtendedRenderer(TabRenderer):
+                def _draw_standard_notation(self, painter, track, system):
+                    # 在 system.y_tab_top 上方绘制五线谱
+                    staff_top = system.y_tab_top - 60
+                    for i in range(5):
+                        y = staff_top + i * 8
+                        painter.drawLine(system.x_start, y, system.x_end, y)
+                    # ... 绘制音符头/符干/符尾等
+        """
+        pass
+
+    def _draw_numbered_notation(self, painter: QPainter, track: GTPTrack,
+                                 system: SystemLayout) -> None:
+        """
+        简谱渲染钩子（预留接口，v0.4.0 新增 - GP8 新功能）
+
+        功能:
+          在六线谱上方/下方绘制简谱(数字记谱法)。
+          当前版本为空实现，需通过子类重写来启用。
+
+        参数:
+            painter: QPainter 绘图对象
+            track:   GTPTrack 音轨数据
+            system:  SystemLayout 系统布局(含坐标信息)
+
+        说明:
+          简谱使用数字 1-7 表示 do-re-mi-fa-sol-la-ti，
+          GP8 引入了简谱显示功能，本程序预留接口以便未来扩展。
+        """
+        pass
+
+    def _draw_slash_notation(self, painter: QPainter, track: GTPTrack,
+                              system: SystemLayout) -> None:
+        """
+        斜线谱渲染钩子（预留接口，v0.4.0 新增）
+
+        功能:
+          在六线谱上方/下方绘制斜线谱(节奏记谱法)。
+          当前版本为空实现，需通过子类重写来启用。
+
+        参数:
+            painter: QPainter 绘图对象
+            track:   GTPTrack 音轨数据
+            system:  SystemLayout 系统布局(含坐标信息)
+
+        说明:
+          斜线谱用斜线(/)表示节拍，常用于节奏吉他和鼓谱。
+        """
+        pass
 
     def _render_page(self, song: GTPSong, track: GTPTrack,
                      page: PageLayout, width: int, height: int) -> QPixmap:

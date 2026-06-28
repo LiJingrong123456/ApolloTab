@@ -5,11 +5,12 @@ ApolloTab - Guitar Pro 文件渲染与播放引擎库
 ============================================================
 
 功能概述:
-  本库提供 Guitar Pro (.gp3/.gp4/.gp5/.gpx) 文件的完整解析、渲染与播放能力，
+  本库提供 Guitar Pro (.gp3/.gp4/.gp5/.gpx/.gp) 文件的完整解析、渲染与播放能力，
   可作为独立库发布到 PyPI，也可集成到 TAB Score Viewer 主程序中。
+  v0.4.0 新增 GP7/GP8 (.gp) 原生支持（基于 alphaTab 算法移植）。
 
 核心模块:
-  - parser:    GTP文件解析 (PyGuitarPro → 中介数据模型)
+  - parser:    GTP文件解析 (GP3-5 用 PyGuitarPro；GP7/GP8 用原生 ZIP+GPIF 解析)
   - models:    数据模型定义 (Note/Beat/Measure/Track/Song)
   - renderer:  六线谱渲染引擎 (QPainter → QPixmap)
   - audio:     音频播放引擎 (MIDI转换 + FluidSynth合成)
@@ -19,36 +20,43 @@ ApolloTab - Guitar Pro 文件渲染与播放引擎库
 快速开始:
     # 方式1: 使用高级API（推荐，最简单）
     from ApolloTab import GTPPlayer
-    
+
     player = GTPPlayer()
-    player.load("my_song.gp5")
+    player.load("my_song.gp5")            # 或 .gp (GP7/GP8)
     images = player.render_track(0)       # 渲染六线谱
     player.init_audio()                   # 初始化音频（可选）
     player.play()                         # 开始播放
-    
+
     # 方式2: 分步操作（更灵活）
-    from ApolloTab import parse_gtp, TabRenderer, SynthEngine, MidiConverter
-    
-    song = parse_gtp("my_song.gp5")
-    print(f"标题: {song.title}, 音轨: {song.track_count}")
-    
+    from ApolloTab import parse_score, TabRenderer, SynthEngine, MidiConverter
+
+    song = parse_score("my_song.gp")      # 智能调度: 自动识别 .gp / .gp5
+    print(f"标题: {song.title}, 音轨: {song.track_count}, 版本: {song.gp_version}")
+
     # 方式3: 一键渲染
     from ApolloTab import render_gtp
     pages = render_gtp("my_song.gp5", track_index=0)
-    
-依赖库:
-  - guitarpro >= 0.11   # Guitar Pro 文件解析（开源项目: pyguitarpro）
-  - PyQt5 >= 5.15       # GUI渲染（用于生成QPixmap图像）
-  - pyfluidsynth >= 1.4.0  # 音频合成（可选，仅音频播放时需要）
 
-版本: v0.2.0 (Phase 4 - 库化重构 + 高级播放器API)
+依赖库:
+  - guitarpro >= 0.11      # GP3-5 文件解析（开源项目: pyguitarpro）
+  - PyQt5 >= 5.15          # GUI渲染（用于生成QPixmap图像）
+  - pyfluidsynth >= 1.4.0  # 音频合成（可选，仅音频播放时需要）
+  注: GP7/GP8 (.gp) 解析仅依赖 Python 标准库(zipfile/xml/struct)
+
+版本: v1.0.1 (Phase 5 - GP7/GP8 原生支持, 修复 GPIF String 弦号映射)
 许可证: Mozilla Public License 2.0 (MPL-2.0)
 创建日期: 2026-06-06
-最后更新: 2026-06-12
+最后更新: 2026-06-28 (v1.0.1: 修复 GP7/GP8 GPIF <String> 弦号映射, 0=底线→0=顶线)
 ============================================================
 """
 
-from .parser import GTPParser, parse_gtp
+from .parser import (
+    GTPParser, parse_gtp,                  # GP3-5 解析器
+    GP7Parser, GpifParser, parse_gp7,      # GP7/GP8 解析器(v0.4.0新增)
+    BinaryStylesheet, PartConfiguration,   # 二进制配置解析器(v0.4.0新增)
+    parse_score,                           # 智能调度函数(v0.4.0新增)
+    GP3_5_EXTENSIONS, GP7_8_EXTENSIONS, ALL_SUPPORTED_EXTENSIONS,
+)
 from .models import GTPNote, GTPBeat, GTPMeasure, GTPTrack, GTPSong
 from .renderer import TabRenderer, render_gtp, TabLayoutEngine
 from .audio import MidiConverter, MidiEvent, SynthEngine
@@ -56,18 +64,26 @@ from .player import GTPPlayer, create_gtp_player, render_gtp_to_images
 from .utils import (
     StandardTunings, NoteDuration, TechniqueType,
     RenderConfig, ThemeConfig,  # v0.2.4新增: 渲染主题配置
+    RenderMode,                 # v0.4.0新增: 渲染模式枚举
     TECHNIQUE_ABBREVIATION, get_string_name
 )
 
-__version__ = "0.3.6"
+__version__ = "1.0.1"
 __all__ = [
     # ===== 高级API（推荐）=====
     'GTPPlayer',              # 高级播放器封装类（整合所有GTP功能）
     'create_gtp_player',      # 工厂函数：快速创建播放器实例
     'render_gtp_to_images',   # 便捷函数：一键渲染为图像列表
-    
-    # 解析器
+
+    # 解析器（GP3-5）
     'GTPParser', 'parse_gtp',
+    # 解析器（GP7/GP8, v0.4.0新增）
+    'GP7Parser', 'GpifParser', 'parse_gp7',
+    'BinaryStylesheet', 'PartConfiguration',
+    # 智能调度函数(v0.4.0新增)
+    'parse_score',
+    # 扩展名常量(v0.4.0新增)
+    'GP3_5_EXTENSIONS', 'GP7_8_EXTENSIONS', 'ALL_SUPPORTED_EXTENSIONS',
     # 数据模型
     'GTPNote', 'GTPBeat', 'GTPMeasure', 'GTPTrack', 'GTPSong',
     # 渲染器
@@ -77,5 +93,6 @@ __all__ = [
     # 工具
     'StandardTunings', 'NoteDuration', 'TechniqueType',
     'RenderConfig', 'ThemeConfig',  # v0.2.4新增: 渲染主题配置
+    'RenderMode',                   # v0.4.0新增: 渲染模式枚举
     'TECHNIQUE_ABBREVIATION', 'get_string_name',
 ]

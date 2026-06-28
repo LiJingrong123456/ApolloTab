@@ -6,7 +6,7 @@
          包含调弦、乐器设置、所有小节等内容
 
 创建日期: 2026-06-06
-最后更新: 2026-06-18 (v0.2.2: 调弦名称改为英文硬编码)
+最后更新: 2026-06-28 (v0.4.0: 扩展 GP7/GP8 字段; 调弦名称改为英文硬编码)
 依赖: Python 3.8+ dataclasses
 ============================================================
 """
@@ -20,7 +20,7 @@ from .measure import GTPMeasure
 class GTPTrack:
     """
     一条音轨(Track)的数据模型 - 对应 Guitar Pro 中的一条吉他/贝斯轨道
-    
+
     属性说明:
       name:          轨道名称 (如 "Lead Guitar", "Bass")
       number:        轨道编号 (从1开始)
@@ -35,6 +35,17 @@ class GTPTrack:
       is_solo:       是否独奏
       is_mute:       是否静音
       capo:          变调夹位置 (0=无变调夹)
+
+    GP7/GP8 扩展字段 (v0.4.0 新增):
+      is_percussion:        是否打击乐轨道（GP7 drumKit）
+      show_standard_notation: 是否显示五线谱（来自 PartConfiguration，预留渲染接口）
+      show_tablature:        是否显示六线谱（默认 True）
+      show_slash:            是否显示斜线谱（预留渲染接口）
+      show_numbered:         是否显示简谱（GP8 新功能，预留渲染接口）
+      midi_bank_msb:         MIDI Bank MSB（音色库选择高7位）
+      midi_bank_lsb:         MIDI Bank LSB（音色库选择低7位）
+      color:                 音轨颜色（RGBA 元组，GP7 音轨颜色标识）
+      short_name:            短名称（用于多轨混排时的简短显示）
     """
 
     name: str = ""                                      # 轨道名称
@@ -47,6 +58,17 @@ class GTPTrack:
     is_solo: bool = False                               # 独奏
     is_mute: bool = False                               # 静音
     capo: int = 0                                       # 变调夹位置
+
+    # === GP7/GP8 扩展字段 (v0.4.0) ===
+    is_percussion: bool = False                         # 打击乐轨道
+    show_standard_notation: bool = False                # 是否显示五线谱（预留）
+    show_tablature: bool = True                         # 是否显示六线谱（默认）
+    show_slash: bool = False                            # 是否显示斜线谱（预留）
+    show_numbered: bool = False                         # 是否显示简谱（GP8预留）
+    midi_bank_msb: int = 0                              # MIDI Bank MSB
+    midi_bank_lsb: int = 0                              # MIDI Bank LSB
+    color: Optional[Tuple[int, int, int, int]] = None   # RGBA 颜色
+    short_name: str = ""                                # 短名称
 
     @property
     def string_count(self) -> int:

@@ -6,7 +6,7 @@
          所有可调整的渲染参数都在此集中管理，修改后全局生效
 
 创建日期: 2026-06-06
-最后更新: 2026-06-13 (v0.2.6: 新增ThemeConfig主题系统; 默认尺寸改为A4比例1000×1414)
+最后更新: 2026-06-28 (v0.4.0: 新增 RenderMode 枚举为 GP7/GP8 多谱表预留接口)
 依赖库: 无（纯常量定义模块）
 ============================================================
 """
@@ -494,6 +494,39 @@ class RenderConfig:
     def COLOR_PAGE_NUMBER(self) -> str:
         """页码颜色 - 从当前主题读取"""
         return getattr(self._theme, 'COLOR_PAGE_NUMBER', '#888888')
+
+
+# ============================================================
+# 渲染模式枚举（v0.4.0 新增 - GP7/GP8 多谱表支持预留）
+# ============================================================
+
+class RenderMode(Enum):
+    """
+    渲染模式枚举 - 用于 TabRenderer 控制渲染哪些谱表
+
+    设计目的:
+      GP7/GP8 文件可包含多种谱表(五线谱/TAB/斜线谱/简谱)，
+      本程序当前仅渲染 TAB 谱表，但通过此枚举预留扩展接口，
+      未来可在 TabRenderer 子类中实现其他谱表的渲染。
+
+    使用示例:
+        # 当前只支持 TAB 模式
+        renderer = TabRenderer()
+        renderer.render_mode = RenderMode.TAB_ONLY
+        # 未来扩展(尚未实现):
+        # renderer.render_mode = RenderMode.TAB_AND_STANDARD
+
+    扩展指南:
+      要新增渲染模式，需在 TabRenderer 子类中重写以下钩子方法:
+        - _draw_standard_notation()  五线谱渲染(预留)
+        - _draw_numbered_notation()  简谱渲染(预留)
+        - _draw_slash_notation()     斜线谱渲染(预留)
+    """
+    TAB_ONLY = 1                  # 仅渲染六线谱(当前唯一支持的默认模式)
+    TAB_AND_STANDARD = 2          # 六线谱+五线谱(预留接口，未来扩展)
+    TAB_AND_NUMBERED = 3          # 六线谱+简谱(预留接口，GP8 新功能)
+    TAB_AND_SLASH = 4             # 六线谱+斜线谱(预留接口)
+    ALL_STAVES = 5                # 所有谱表(预留接口，未来扩展)
 
 
 # ============================================================

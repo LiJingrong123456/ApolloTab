@@ -6,6 +6,7 @@
          包含拍号、调号、重复记号等信息
 
 创建日期: 2026-06-06
+最后更新: 2026-06-28 (v0.4.0: 扩展 GP7/GP8 字段)
 依赖: Python 3.8+ dataclasses
 ============================================================
 """
@@ -19,7 +20,7 @@ from .beat import GTPBeat
 class GTPMeasure:
     """
     一个小节(Measure)的数据模型
-    
+
     属性说明:
       number:          小节序号 (从1开始)
       beats:           该小节内的所有拍列表
@@ -28,6 +29,14 @@ class GTPMeasure:
       repeat_close:    反复结束次数 (-1表示无, 2表示反复2次)
       marker:          小节标记/段落名 (如 "Chorus", "Solo")
       key_signature:   调号 (0=C大调/a小调, 正值=升号数量, 负值=降号数量)
+
+    GP7/GP8 扩展字段 (v0.4.0 新增):
+      is_anacrusis:      是否弱起小节（不完全小节，节拍不足）
+      alternate_endings:  反复交替结束位标志（bit0=第1结束, bit1=第2结束, ...）
+      triplet_feel:      三连音感 (None/Triplet8th/Triplet16th/Dotted8th/Dotted16th/Scottish8th/Scottish16th)
+      is_double_bar:     是否双竖线 ||
+      directions:        跳转方向标记列表 (DaCapo/DalSegno/Coda/Fine 等)
+      section_text:      段落文本（GP7 Section，比 marker 更结构化）
     """
 
     number: int = 0                                    # 小节序号
@@ -37,6 +46,14 @@ class GTPMeasure:
     repeat_close: int = -1                             # 反复结束次数(-1=无)
     marker: Optional[str] = None                       # 段落标记
     key_signature: int = 0                             # 调号
+
+    # === GP7/GP8 扩展字段 (v0.4.0) ===
+    is_anacrusis: bool = False                         # 弱起小节
+    alternate_endings: int = 0                         # 反复交替结束位标志
+    triplet_feel: Optional[str] = None                 # 三连音感
+    is_double_bar: bool = False                        # 双竖线
+    directions: List[str] = field(default_factory=list)  # 跳转方向标记
+    section_text: Optional[str] = None                 # 段落文本(GP7 Section)
 
     @property
     def total_duration(self) -> float:

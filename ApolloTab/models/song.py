@@ -6,12 +6,13 @@
          是解析器输出和渲染器输入的核心中介数据结构
 
 创建日期: 2026-06-06
+最后更新: 2026-06-28 (v0.4.0: 扩展 GP7/GP8 字段)
 依赖: Python 3.8+ dataclasses
 ============================================================
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from .track import GTPTrack
 
 
@@ -19,7 +20,7 @@ from .track import GTPTrack
 class GTPSong:
     """
     完整歌曲(Song)的数据模型 - Guitar Pro 文件的顶层表示
-    
+
     属性说明:
       title:       歌曲标题
       artist:      艺术家/作曲者
@@ -31,6 +32,16 @@ class GTPSong:
       copyright:   版权信息
       instructions: 演奏说明
       tracks:      所有音轨列表
+
+    GP7/GP8 扩展字段 (v0.4.0 新增):
+      gp_version:    文件版本 ("7.0"/"8.0"，GP3-5 为空字符串)
+      words:         作词者
+      music:         作曲者
+      tabber:        制谱者
+      notices:       附加说明
+      stylesheet:    BinaryStylesheet 解析结果字典（音轨名显示策略、页眉页脚模板等）
+                     None 表示未解析或非 GP7/GP8 文件
+      default_systems_layout: 默认每页系统数（GP7 ScoreSystemsDefaultLayout）
     """
 
     title: str = ""                           # 歌曲标题
@@ -43,6 +54,15 @@ class GTPSong:
     copyright: str = ""                       # 版权信息
     instructions: str = ""                    # 演奏说明
     tracks: List[GTPTrack] = field(default_factory=list)  # 音轨列表
+
+    # === GP7/GP8 扩展字段 (v0.4.0) ===
+    gp_version: str = ""                      # 文件版本 ("7.0"/"8.0")
+    words: str = ""                           # 作词者
+    music: str = ""                           # 作曲者
+    tabber: str = ""                          # 制谱者
+    notices: str = ""                         # 附加说明
+    stylesheet: Optional[Dict[str, Any]] = None  # BinaryStylesheet 解析结果
+    default_systems_layout: int = 3           # 默认每页系统数
 
     @property
     def track_count(self) -> int:
