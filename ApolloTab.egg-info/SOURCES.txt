@@ -23,7 +23,11 @@ ApolloTab/models/note.py
 ApolloTab/models/song.py
 ApolloTab/models/track.py
 ApolloTab/parser/__init__.py
+ApolloTab/parser/binary_stylesheet.py
+ApolloTab/parser/gp7_parser.py
+ApolloTab/parser/gpif_parser.py
 ApolloTab/parser/gtp_parser.py
+ApolloTab/parser/part_configuration.py
 ApolloTab/renderer/__init__.py
 ApolloTab/renderer/layout_engine.py
 ApolloTab/renderer/tab_renderer.py
