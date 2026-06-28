@@ -6,13 +6,15 @@
 
 **Guitar Pro File Parsing, Rendering, and Audio Playback Engine Library**
 
-`ApolloTab` is a fully-featured Python library for parsing, rendering, and playing Guitar Pro (.gp3/.gp4/.gp5/.gpx) tablature files.
+`ApolloTab` is a fully-featured Python library for parsing, rendering, and playing Guitar Pro (.gp3/.gp4/.gp5/.gpx/.gp) tablature files.
 
 ## Features
 
-- **File Parsing**: Full support for GP3/GP4/GP5/GPX formats — extract song info, tracks, measures, notes, technique markings
+- **File Parsing**: Full support for GP3/GP4/GP5/GPX/GP(GP7/GP8) formats — extract song info, tracks, measures, notes, technique markings
+- **Smart Dispatch**: `parse_score()` automatically selects the correct parser based on file extension
 - **Tablature Rendering**: Render high-quality tablature images (QPixmap) using QPainter with multi-page output
-- **Audio Playback**: Real-time MIDI synthesis engine based on FluidSynth with SoundFont support
+- **Audio Playback**: Real-time MIDI synthesis engine based on FluidSynth with SoundFont support, including Bank Select + Program Change
+- **Repeat Signs**: Full repeat sign (`||:` / `:||`) expansion with playhead timeline synchronization
 - **Technique Support**: 18 playing techniques (hammer-on, pull-off, bend, slide, harmonic, vibrato, etc.)
 - **Highly Configurable**: Fully adjustable rendering parameters (line width, spacing, colors, fonts, etc.)
 - **Theme Support**: Built-in light/dark color themes with custom theme extensibility
@@ -190,6 +192,7 @@ if __name__ == "__main__":
 | Function                        | Description               | Return Value    |
 | ------------------------------- | ------------------------- | --------------- |
 | `parse_gtp(path)`               | Parse GTP file            | `GTPSong`       |
+| `parse_score(path)`             | Smart dispatch (auto-detect format) | `GTPSong` |
 | `render_gtp(path, track_index)` | One-click render GTP file | `List[QPixmap]` |
 
 ### Main Classes
@@ -206,17 +209,33 @@ if __name__ == "__main__":
 
 #### Parser (`ApolloTab.parser`)
 
-| Class       | Description           |
-| ----------- | --------------------- |
-| `GTPParser` | GTP file parser class |
+| Class                | Description                              |
+| -------------------- | ---------------------------------------- |
+| `GTPParser`          | GTP file parser class (GP3/GP4/GP5/GPX)  |
+| `GP7Parser`          | GP7/GP8 (.gp) ZIP unpack parser          |
+| `GpifParser`         | GP7/GP8 GPIF XML content parser          |
+| `BinaryStylesheet`   | GP7/GP8 binary stylesheet parser         |
+| `PartConfiguration`  | GP7/GP8 part configuration parser        |
+| `parse_score(path)`  | Smart dispatch (auto-detect by extension)|
 
 **Usage**:
 
 ```python
-from ApolloTab.parser import GTPParser
+from ApolloTab import parse_score
+
+# Auto-detect format by file extension
+song = parse_score("song.gp")     # GP7/GP8
+song = parse_score("song.gp5")    # GP5
+song = parse_score("song.gpx")    # GPX
+
+# Or use specific parser directly
+from ApolloTab.parser import GTPParser, GP7Parser
 
 parser = GTPParser()
 song = parser.parse("song.gp5")
+
+gp7 = GP7Parser()
+song = gp7.parse("song.gp")
 ```
 
 #### Renderer (`ApolloTab.renderer`)
@@ -378,29 +397,34 @@ engine = SynthEngine(
 
 ```
 ApolloTab/
-├── __init__.py           # Package entry, exports core API
-├── py.typed              # PEP 561 type hint marker
+├── __init__.py               # Package entry, exports core API
+├── py.typed                  # PEP 561 type hint marker
+├── player.py                 # Playback controller (timeline + audio sync)
 ├── parser/
-│   ├── __init__.py
-│   └── gtp_parser.py     # PyGuitarPro -> GTPSong conversion
+│   ├── __init__.py           # Smart dispatch parse_score()
+│   ├── gtp_parser.py         # PyGuitarPro -> GTPSong (GP3/GP4/GP5/GPX)
+│   ├── gp7_parser.py         # GP7/GP8 ZIP unpack + file stream reader
+│   ├── gpif_parser.py        # GP7/GP8 GPIF XML content parser
+│   ├── binary_stylesheet.py  # GP7/GP8 binary stylesheet parser
+│   └── part_configuration.py # GP7/GP8 part configuration parser
 ├── models/
 │   ├── __init__.py
-│   ├── song.py           # Song model
-│   ├── track.py          # Track model
-│   ├── measure.py        # Measure model
-│   ├── beat.py           # Beat model
-│   └── note.py           # Note model
+│   ├── song.py               # Song model
+│   ├── track.py              # Track model
+│   ├── measure.py            # Measure model
+│   ├── beat.py               # Beat model
+│   └── note.py               # Note model
 ├── renderer/
 │   ├── __init__.py
-│   ├── tab_renderer.py   # Tablature drawing engine
-│   └── layout_engine.py  # Coordinate layout calculation
+│   ├── tab_renderer.py       # Tablature drawing engine
+│   └── layout_engine.py      # Coordinate layout calculation
 ├── audio/
 │   ├── __init__.py
-│   ├── midi_converter.py # GTP -> MIDI event conversion
-│   └── synth_engine.py   # FluidSynth synthesis engine
+│   ├── midi_converter.py     # GTP -> MIDI event conversion (incl. repeat expansion)
+│   └── synth_engine.py       # FluidSynth synthesis engine (CC/Program Change)
 └── utils/
     ├── __init__.py
-    └── constants.py      # Global constant definitions
+    └── constants.py          # Global constant definitions (RenderMode, etc.)
 ```
 
 ### Local Development
@@ -427,11 +451,12 @@ mypy ApolloTab/
 
 ### Required Dependencies
 
-| Package                                                    | Version | Purpose                   | License  |
-| ---------------------------------------------------------- | ------- | ------------------------- | -------- |
-| [pyguitarpro](https://github.com/ozono/guitarpro)          | >=0.11  | Guitar Pro file parsing   | LGPL-3.0 |
-| [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) | >=5.15  | GUI rendering framework   | GPL v3   |
-| [pyfluidsynth](https://github.com/nwhitehead/pyfluidsynth) | >=1.4.0 | FluidSynth Python binding | LGPL-2.1 |
+| Package                                                    | Version  | Purpose                   | License  |
+| ---------------------------------------------------------- | -------- | ------------------------- | -------- |
+| [pyguitarpro](https://github.com/ozono/guitarpro)          | >=0.10.1 | Guitar Pro file parsing   | LGPL-3.0 |
+| [pyfluidsynth](https://github.com/nwhitehead/pyfluidsynth) | >=1.4.0  | FluidSynth Python binding | LGPL-2.1 |
+
+> **Note**: PyQt5 is no longer a pip dependency. On ARM architectures, install it via `apt` and create symlinks manually. The rendering engine will use it if available at runtime.
 
 ### Optional Dependencies
 
@@ -477,13 +502,15 @@ Issues and Pull Requests are welcome!
 
 **Guitar Pro 文件解析、渲染与音频播放引擎库**
 
-`ApolloTab` 是一个功能完整的 Python 库，用于解析、渲染和播放 Guitar Pro (.gp3/.gp4/.gp5/.gpx) 格式的吉他谱文件。
+`ApolloTab` 是一个功能完整的 Python 库，用于解析、渲染和播放 Guitar Pro (.gp3/.gp4/.gp5/.gpx/.gp) 格式的吉他谱文件。
 
 ## 核心功能
 
-- **文件解析**: 完整支持 GP3/GP4/GP5/GPX 格式，提取歌曲信息、音轨、小节、音符、技巧标记
+- **文件解析**: 完整支持 GP3/GP4/GP5/GPX/GP(GP7/GP8) 格式，提取歌曲信息、音轨、小节、音符、技巧标记
+- **智能调度**: `parse_score()` 根据文件扩展名自动选择对应解析器
 - **六线谱渲染**: 使用 QPainter 将乐谱数据渲染为高质量六线谱图像（QPixmap），支持多页输出
-- **音频播放**: 基于 FluidSynth 的 MIDI 合成引擎，支持 SoundFont 音色库实时播放
+- **音频播放**: 基于 FluidSynth 的 MIDI 合成引擎，支持 SoundFont 音色库实时播放，含 Bank Select + Program Change
+- **反复记号**: 完整支持反复记号（`||:` / `:||`）展开与播放光标同步
 - **技巧支持**: 18种演奏技巧（击弦、勾弦、推弦、滑音、泛音、颤音等）
 - **高度可配置**: 渲染参数完全可调（线宽、间距、颜色、字体等）
 - **主题支持**: 内置黑白/深色配色方案，支持自定义主题扩展
@@ -677,6 +704,7 @@ if __name__ == "__main__":
 | 函数                              | 说明        | 返回值             |
 | ------------------------------- | --------- | --------------- |
 | `parse_gtp(path)`               | 解析GTP文件   | `GTPSong`       |
+| `parse_score(path)`             | 智能调度（自动识别格式）| `GTPSong` |
 | `render_gtp(path, track_index)` | 一键渲染GTP文件 | `List[QPixmap]` |
 
 ### 主要类
@@ -693,17 +721,33 @@ if __name__ == "__main__":
 
 #### 解析器 (`ApolloTab.parser`)
 
-| 类名          | 说明        |
-| ----------- | --------- |
-| `GTPParser` | GTP文件解析器类 |
+| 类                   | 说明                              |
+| -------------------- | --------------------------------- |
+| `GTPParser`          | GTP文件解析器类 (GP3/GP4/GP5/GPX) |
+| `GP7Parser`          | GP7/GP8 (.gp) ZIP解包解析器       |
+| `GpifParser`         | GP7/GP8 GPIF XML内容解析器        |
+| `BinaryStylesheet`   | GP7/GP8 二进制样式表解析器        |
+| `PartConfiguration`  | GP7/GP8 声部配置解析器            |
+| `parse_score(path)`  | 智能调度（根据扩展名自动选择）    |
 
 **用法**:
 
 ```python
-from ApolloTab.parser import GTPParser
+from ApolloTab import parse_score
+
+# 根据扩展名自动识别格式
+song = parse_score("song.gp")      # GP7/GP8
+song = parse_score("song.gp5")     # GP5
+song = parse_score("song.gpx")     # GPX
+
+# 或直接指定解析器
+from ApolloTab.parser import GTPParser, GP7Parser
 
 parser = GTPParser()
 song = parser.parse("song.gp5")
+
+gp7 = GP7Parser()
+song = gp7.parse("song.gp")
 ```
 
 #### 渲染器 (`ApolloTab.renderer`)
@@ -865,11 +909,16 @@ engine = SynthEngine(
 
 ```
 ApolloTab/
-├── __init__.py           # 包入口，导出核心API
-├── py.typed              # PEP 561 类型提示标记
+├── __init__.py               # 包入口，导出核心API
+├── py.typed                  # PEP 561 类型提示标记
+├── player.py                 # 播放控制器（时间线 + 音频同步）
 ├── parser/
 │   ├── __init__.py
-│   └── gtp_parser.py     # PyGuitarPro → GTPSong 转换
+│   ├── gtp_parser.py         # PyGuitarPro → GTPSong (GP3/GP4/GP5/GPX)
+│   ├── gp7_parser.py         # GP7/GP8 ZIP解包与文件流读取
+│   ├── gpif_parser.py        # GP7/GP8 GPIF XML完整解析器
+│   ├── binary_stylesheet.py  # GP7/GP8 二进制样式表解析
+│   └── part_configuration.py # GP7/GP8 声部配置解析
 ├── models/
 │   ├── __init__.py
 │   ├── song.py           # 歌曲模型
@@ -922,9 +971,10 @@ mypy ApolloTab/
 
 | 包名                                                         | 版本      | 用途                  | 许可证      |
 | ---------------------------------------------------------- | ------- | ------------------- | -------- |
-| [pyguitarpro](https://github.com/Perlence/PyGuitarPro)          | >=0.11  | Guitar Pro文件解析      | LGPL-3.0 |
-| [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) | >=5.15  | GUI渲染框架             | GPL v3   |
-| [pyfluidsynth](https://github.com/nwhitehead/pyfluidsynth) | >=1.4.0 | FluidSynth Python绑定 | LGPL-2.1 |
+| [pyguitarpro](https://github.com/Perlence/PyGuitarPro)          | >=0.10.1 | Guitar Pro文件解析      | LGPL-3.0 |
+| [pyfluidsynth](https://github.com/nwhitehead/pyfluidsynth) | >=1.4.0  | FluidSynth Python绑定   | LGPL-2.1 |
+
+> **注意**: PyQt5 已不再是 pip 依赖。在 ARM 架构上需通过 `apt` 安装后手动创建软链接，pip 无法直接安装。渲染引擎会在运行时检测并使用已安装的 PyQt5。
 
 ### 可选依赖
 
