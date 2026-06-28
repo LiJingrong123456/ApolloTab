@@ -9,7 +9,7 @@
          [v0.4.1] 兼容 GP7/GP8 新字段(打击乐/力度/连音/重音)
 
 创建日期: 2026-06-07
-最后更新: 2026-06-28 (v0.4.1: 兼容 GP7/GP8 新字段)
+最后更新: 2026-06-28 (v1.0.1: 补充音色映射, 发送 Bank Select + Program Change)
 依赖: Python 3.8+ dataclasses, gtp_engine.models
 设计原则:
   - 时间精度: 使用 tick(脉冲)作为最小时间单位，避免浮点累积误差
@@ -39,12 +39,14 @@
 
   算法复杂度: O(n × k), n=原始小节数, k=平均反复次数
 
-GP7/GP8 兼容性 (v0.4.1):
+GP7/GP8 兼容性 (v0.4.1-v1.0.1):
   - 鼓轨识别: 优先检查 track.is_percussion 字段，再回退到名称匹配
   - 力度映射: beat.dynamics 字段(PPP/PP/P/MP/MF/F/FF/FFF) → MIDI velocity
   - 连音时值: beat.tuplet_numerator/denominator 修正实际时长
   - 重音类型: note.accentuated_type (1=Normal, 2=Heavy) 调整力度
   - 打击乐音高: note.is_percussion + percussion_articulation 直接作为 MIDI 音高
+  - 音色映射(v1.0.1): 每个音轨开头发送 Bank Select(MSB/LSB) + Program Change,
+    GP7/GP8 解析的 bank 保存到 track.midi_bank_msb/lsb, 鼓轨强制 MSB=128+Program=0
 ============================================================
 """
 
@@ -62,10 +64,11 @@ class MidiEvent:
     
     属性说明:
       time:     绝对时间位置(tick单位, 从歌曲开头开始累加)
-      type:     事件类型 ('note_on' | 'note_off' | 'tempo' | 'pitch_bend')
+      type:     事件类型 ('note_on'|'note_off'|'tempo'|'pitch_bend'|'program_change'|'control_change')
       channel:  MIDI通道 (0-15), 吉他通常用通道0-3
-      pitch:    音高/MIDI音高值 (0-127), pitch_bend时为弯音值(0-16383,中值8192)
-      velocity: 力度/击弦强度 (0-127), note_off时为0
+      pitch:    音高/MIDI音高值(0-127); pitch_bend时为弯音值(0-16383,中值8192);
+                control_change时为控制器号(CC#); program_change时为乐器号
+      velocity: 力度/击弦强度(0-127), note_off时为0; control_change时为控制器值
       value:    附加值(tempo事件用, BPM值)
     
     调用来源: MidiConverter.convert() 生成的所有MIDI事件
@@ -258,6 +261,11 @@ class MidiConverter:
             value=song.tempo
         ))
 
+        # === [v1.0.1] Step 1.5: 插入音色事件(Bank Select + Program Change) ===
+        # 单轨模式也使用 GUITAR_CHANNEL, 根据 track 实际类型发送鼓组或旋律音色
+        program_events = self._create_program_events(track, self.GUITAR_CHANNEL)
+        events.extend(program_events)
+
         # === Step 2: [v0.4.0] 展开反复记号，获取实际播放顺序 ===
         expanded_indices = self.expand_measure_indices(track.measures)
 
@@ -276,7 +284,13 @@ class MidiConverter:
             current_tick += measure_ticks
 
         # === Step 4: 按 time 排序确保时序正确 ===
-        events.sort(key=lambda e: (e.time, 0 if e.type == "note_on" else 1))
+        # 同一时间的事件顺序: 控制/音色设置 → tempo → pitch_bend → note_on → note_off
+        # 必须先发送 program_change, 再发送该时刻的音符
+        events.sort(key=lambda e: (
+            e.time,
+            {'control_change': 0, 'program_change': 1, 'tempo': 2,
+             'pitch_bend': 3, 'note_on': 4, 'note_off': 5}.get(e.type, 99)
+        ))
 
         return events
     
@@ -336,6 +350,87 @@ class MidiConverter:
                 return True
         
         return False
+    
+    def _create_program_events(self, track, channel: int) -> List[MidiEvent]:
+        """
+        创建音轨开头的音色设置事件(Bank Select + Program Change)
+
+        发送顺序(符合 MIDI 规范):
+          1. Bank Select MSB (CC#0)
+          2. Bank Select LSB (CC#32)
+          3. Program Change
+
+        特殊处理:
+          - 鼓轨: 强制 Bank MSB=128 + Program=0, 启用 GM 鼓组
+          - 旋律轨: 若 track.midi_bank_msb/lsb 非零则发送 Bank Select,
+                    再发送 track.instrument 作为 Program Change
+
+        参数:
+            track:   GTPTrack 音轨对象
+            channel: 该音轨分配的 MIDI 通道
+
+        返回:
+            音色事件列表, 按发送顺序排列, 时间均为 0
+        """
+        events: List[MidiEvent] = []
+
+        if self.is_drum_track(track):
+            # === 鼓轨: 强制切换到打击乐 Bank 并选择鼓组 Program ===
+            # 与 SynthEngine.set_drum_kit 保持一致: CC#0=128, Program=0
+            events.append(MidiEvent(
+                time=0,
+                type='control_change',
+                channel=channel,
+                pitch=0,          # CC#0 = Bank Select MSB
+                velocity=128,     # Percussion Bank (项目约定)
+                value=0
+            ))
+            events.append(MidiEvent(
+                time=0,
+                type='program_change',
+                channel=channel,
+                pitch=0,          # Program 0 = Standard Drum Kit
+                velocity=0,
+                value=0
+            ))
+        else:
+            # === 旋律轨: Bank Select (可选) + Program Change ===
+            msb = getattr(track, 'midi_bank_msb', 0)
+            lsb = getattr(track, 'midi_bank_lsb', 0)
+
+            if msb != 0 or lsb != 0:
+                # CC#0 Bank Select MSB
+                events.append(MidiEvent(
+                    time=0,
+                    type='control_change',
+                    channel=channel,
+                    pitch=0,
+                    velocity=msb & 0x7F,
+                    value=0
+                ))
+                # CC#32 Bank Select LSB
+                events.append(MidiEvent(
+                    time=0,
+                    type='control_change',
+                    channel=channel,
+                    pitch=32,
+                    velocity=lsb & 0x7F,
+                    value=0
+                ))
+
+            # Program Change (乐器号)
+            program = getattr(track, 'instrument', 0)
+            if 0 <= program <= 127:
+                events.append(MidiEvent(
+                    time=0,
+                    type='program_change',
+                    channel=channel,
+                    pitch=program,
+                    velocity=0,
+                    value=0
+                ))
+
+        return events
     
     def convert_all_tracks(self, song) -> Tuple[List[MidiEvent], List[int]]:
         """
@@ -400,6 +495,11 @@ class MidiConverter:
 
             track_channels.append(ch)
 
+            # === [v1.0.1] 每个音轨开头插入音色事件 ===
+            # 必须先设置 Bank/Program, 再发送该轨道的音符事件
+            program_events = self._create_program_events(track, ch)
+            all_events.extend(program_events)
+
             # 按展开顺序转换该音轨的所有小节
             current_tick = 0
             for orig_idx in expanded_indices:
@@ -412,7 +512,12 @@ class MidiConverter:
                 current_tick += measure_ticks
 
         # 全局排序：所有轨道的事件按时间统一排序
-        all_events.sort(key=lambda e: (e.time, 0 if e.type == "note_on" else 1))
+        # 同一 tick 下: 控制/音色 → tempo → pitch_bend → note_on → note_off
+        all_events.sort(key=lambda e: (
+            e.time,
+            {'control_change': 0, 'program_change': 1, 'tempo': 2,
+             'pitch_bend': 3, 'note_on': 4, 'note_off': 5}.get(e.type, 99)
+        ))
 
         return all_events, track_channels
     

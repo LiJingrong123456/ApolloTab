@@ -481,6 +481,12 @@ class GpifParser:
         if sound.program > 0:
             track.instrument = sound.program
 
+        # 设置 MIDI Bank MSB/LSB (GP7/GP8 支持音色库选择)
+        # sound.bank = (MSB << 7) | LSB, 范围 0-16383
+        # 拆分为 7-bit MSB/LSB 存入 track, 供 midi_converter 发送 Bank Select
+        track.midi_bank_msb = (sound.bank >> 7) & 0x7F
+        track.midi_bank_lsb = sound.bank & 0x7F
+
     def _parse_instrument_set(self, node: ET.Element, track: GTPTrack) -> bool:
         """
         解析 <InstrumentSet> 节点 - 检测是否打击乐

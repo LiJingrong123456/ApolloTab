@@ -8,7 +8,7 @@
          [v0.2.12] 新增 Linux 多音频驱动自动尝试 (pulseaudio/alsa/jack等)
 
 创建日期: 2026-06-07
-最后更新: 2026-06-19 (v0.2.12: Linux 下自动尝试多种音频驱动解决无声音问题)
+最后更新: 2026-06-28 (v1.0.1: _play_event 支持 control_change/program_change 事件)
 依赖: 
   - pyfluidsynth >= 1.4.0 (Python绑定, 开源项目: pyfluidsynth/nwhitehead)
   - Windows: libfluidsynth-3.dll (FluidSynth C库, 需放到项目根目录或系统PATH中)
@@ -1116,6 +1116,15 @@ class SynthEngine:
                 # 用于实现推弦(bend)、颤音(vibrato)等效果
                 self._synth.pitch_bend(event.channel, event.pitch)
                 
+            elif event.type == "control_change":
+                # 控制变化: CC# + 值 (0-127)
+                # 用于 Bank Select (CC#0/CC#32) 等音色库切换
+                self._synth.cc(event.channel, event.pitch, event.velocity)
+
+            elif event.type == "program_change":
+                # 程序变化: 切换乐器音色
+                self._synth.program_change(event.channel, event.pitch)
+
             elif event.type == "tempo":
                 # tempo 变化: 更新内部 BPM 参考
                 # (实际变速能力需要更复杂的实现，这里仅记录)
