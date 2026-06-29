@@ -29,7 +29,8 @@
 调用入口: 由 gp7_parser.py 调用，传入 score.gpif 的 XML 字符串
 
 创建日期: 2026-06-28 (v0.4.0: GP7/GP8 支持)
-最后更新: 2026-06-28 (v1.0.1: 修复 GPIF String 弦号映射, 0=底线需反转为 ApolloTab 0=顶线)
+最后更新: 2026-06-28 (v1.1.2: 解析 <Articulations> 节点,
+                   将 GP7/GP8 鼓轨 InstrumentArticulation 索引映射到 GM MIDI note)
 依赖: Python 3.8+ 标准库 xml.etree.ElementTree + copy
 ============================================================
 """
@@ -40,11 +41,11 @@ from typing import Dict, List, Optional, Tuple, Any
 
 # 导入数据模型
 from ..models.song import GTPSong
-from ..models.track import GTPTrack
+from ..models.track import GTPTrack, PercussionArticulation
 from ..models.measure import GTPMeasure
 from ..models.beat import GTPBeat
 from ..models.note import GTPNote, BendData
-from ..utils.constants import NoteDuration, TechniqueType
+from ..utils.constants import NoteDuration, TechniqueType, BendType, BendStyle, VibratoType
 
 
 # ============================================================
@@ -419,6 +420,7 @@ class GpifParser:
           Sounds:      音色定义(MIDI Program/Bank)
           PlaybackState: 播放状态(Solo/Mute/Default)
           Staves:      调弦信息(Staff/Properties/Tuning/Pitches)
+          Articulations: 打击乐 articulation 列表(GP7/GP8 鼓轨)
         """
         track_id = node.get('id', '')
         track = GTPTrack()
@@ -470,6 +472,9 @@ class GpifParser:
             elif tag == 'Sounds':
                 # 解析音色(提取 MIDI Program)
                 self._parse_sounds(c, sound)
+            elif tag == 'Articulations':
+                # [v1.1.2] 解析打击乐 articulation 列表
+                self._parse_articulations(c, track)
 
         # 存储到映射表
         track.is_percussion = is_percussion
@@ -508,6 +513,69 @@ class GpifParser:
                 except ValueError:
                     pass
         return is_percussion
+
+    def _parse_articulations(self, node: ET.Element, track: GTPTrack) -> None:
+        """
+        解析 <Articulations> 节点 - GP7/GP8 鼓轨打击乐 articulation 列表
+
+        GPIF XML 结构示例:
+          <Articulations>
+            <Articulation>
+              <Name>Snare (hit)</Name>
+              <InputMidiNumbers>38</InputMidiNumbers>
+              <OutputMidiNumber>38</OutputMidiNumber>
+              <StaffLine>0</StaffLine>
+              ...
+            </Articulation>
+            ...
+          </Articulations>
+
+        每个 <Articulation> 在 alphaTab 中对应一个 InstrumentArticulation，
+        其中 <OutputMidiNumber> 是 GM 标准 MIDI 鼓音编号。
+
+        <InstrumentArticulation> 在 <Note> 中是一个整数索引，指向本列表。
+        midi_converter 会根据该索引从 track.percussion_articulations 中
+        取出 output_midi_number 作为真实 MIDI pitch。
+
+        参数:
+            node:  <Articulations> XML 节点
+            track: 当前 GTPTrack 对象
+        """
+        articulations: List[PercussionArticulation] = []
+        for c in node:
+            if c.tag != 'Articulation':
+                continue
+
+            articulation = PercussionArticulation()
+            for sub in c:
+                sub_text = (sub.text or '').strip() if sub.text else ''
+                if sub.tag == 'Name':
+                    articulation.name = sub_text
+                elif sub.tag == 'OutputMidiNumber':
+                    try:
+                        articulation.output_midi_number = int(sub_text)
+                    except ValueError:
+                        articulation.output_midi_number = -1
+                elif sub.tag == 'InputMidiNumbers':
+                    # alphaTab 用第一个值作为 articulation 内部 id
+                    parts = sub_text.split()
+                    if parts:
+                        try:
+                            articulation.unique_id = parts[0]
+                        except ValueError:
+                            pass
+                elif sub.tag == 'StaffLine':
+                    try:
+                        articulation.staff_line = int(sub_text)
+                    except ValueError:
+                        pass
+                elif sub.tag == 'Type':
+                    # 元素类型，与 Name 组合成唯一键
+                    articulation.element_type = sub_text
+
+            articulations.append(articulation)
+
+        track.percussion_articulations = articulations
 
     def _parse_midi_connection(self, node: ET.Element, track: GTPTrack,
                                 sound: _GpifSound) -> None:
@@ -1125,8 +1193,13 @@ class GpifParser:
                     note.is_tie_destination = True
             elif tag == 'Vibrato':
                 # 颤音(Slight/Wide)
-                if text in ('Slight', 'Wide'):
+                # [v1.1.0] 同时写入 vibrato 枚举, 供 MIDI 合成正弦波揉弦使用
+                if text == 'Slight':
                     note.add_technique(TechniqueType.VIBRATO)
+                    note.vibrato = VibratoType.SLIGHT
+                elif text == 'Wide':
+                    note.add_technique(TechniqueType.VIBRATO)
+                    note.vibrato = VibratoType.WIDE
             elif tag == 'LeftFingering':
                 # 左手指法: P/I/M/A/C
                 finger_map = {'P': 1, 'I': 2, 'M': 3, 'A': 4, 'C': 5}
@@ -1144,6 +1217,7 @@ class GpifParser:
                     pass
 
         # === 推弦曲线组装 ===
+        # [v1.1.0] 使用 BendType 枚举 + BendStyle, 单位已为 alphaTab(0~60, 1/4半音)
         if is_bended:
             note.add_technique(TechniqueType.BEND)
             if bend_origin is None:
@@ -1164,12 +1238,23 @@ class GpifParser:
                     points.append((30, bend_middle_value))
             points.append((bend_destination[0], bend_destination[1]))
 
-            # 计算推弦峰值(用于显示文字)
+            # 计算推弦峰值(用于显示文字, 1/4 半音单位)
             max_val = max(p[1] for p in points) if points else 0
 
+            # 推断 BendType: 有释放(终点<峰值)→BEND_RELEASE, 否则→BEND
+            dest_val = bend_destination[1] if bend_destination else 0
+            origin_val = bend_origin[1] if bend_origin else 0
+            if origin_val > 0 and dest_val >= origin_val:
+                bend_type = BendType.PREBEND
+            elif dest_val < max_val and max_val > 0:
+                bend_type = BendType.BEND_RELEASE
+            else:
+                bend_type = BendType.BEND
+
             note.bend = BendData(
-                bend_type='bend',
-                value=bend_destination[1] if bend_destination else 0,
+                bend_type=bend_type,
+                bend_style=BendStyle.DEFAULT,
+                value=dest_val,
                 max_value=max_val,
                 points=points,
             )

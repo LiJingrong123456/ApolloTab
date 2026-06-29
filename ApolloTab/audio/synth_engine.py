@@ -8,7 +8,7 @@
          [v0.2.12] 新增 Linux 多音频驱动自动尝试 (pulseaudio/alsa/jack等)
 
 创建日期: 2026-06-07
-最后更新: 2026-06-28 (v1.0.1: _play_event 支持 control_change/program_change 事件)
+最后更新: 2026-06-28 (v1.1.2: set_drum_kit 发送合法 Bank Select CC#0=1/CC#32=0)
 依赖: 
   - pyfluidsynth >= 1.4.0 (Python绑定, 开源项目: pyfluidsynth/nwhitehead)
   - Windows: libfluidsynth-3.dll (FluidSynth C库, 需放到项目根目录或系统PATH中)
@@ -590,8 +590,13 @@ class SynthEngine:
           80=Shaker        | 81=Jingle Bell      | 82=Bell Tree
         """
         if self._synth:
-            # CC#0 = Bank Select MSB, 值128 = Percussion Bank (GM标准)
-            self._synth.cc(channel, 0, 128)
+            # [v1.1.2] 鼓组 Bank 128 拆分为合法的 14-bit Bank Select:
+            #   CC#0 (MSB) = 128 >> 7 = 1
+            #   CC#32 (LSB) = 128 & 0x7F = 0
+            # 之前直接 cc(channel, 0, 128) 发送 128 给 CC 值，超出 0-127 范围，
+            # FluidSynth 会忽略该切换，鼓组音色无法生效。
+            self._synth.cc(channel, 0, 1)       # CC#0 = Bank Select MSB = 1
+            self._synth.cc(channel, 32, 0)      # CC#32 = Bank Select LSB = 0
             # Program Change 选择具体鼓组类型
             self._synth.program_change(channel, kit)
     

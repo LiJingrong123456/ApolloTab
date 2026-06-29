@@ -54,7 +54,8 @@
   - PyQt5 (QPixmap, 用于图像渲染)
 
 创建日期: 2026-06-12
-最后更新: 2026-06-28 (v0.4.1: GP7/GP8 (.gp) 文件支持，通过 parse_score 智能调度)
+最后更新: 2026-06-28 (v1.1.1: 移除 rebuild_audio_events 中强制覆盖音色逻辑,
+                   由 midi_converter 统一处理音色事件)
 ============================================================
 """
 
@@ -664,22 +665,11 @@ class GTPPlayer:
                 self._midi_converter.convert_all_tracks(self._song)
             )
             
-            # 为每个通道设置合适的乐器音色
-            if self._track_channels:
-                for ch in set(self._track_channels):
-                    if ch == 9:
-                        # 通道9是MIDI打击乐保留通道，设置为鼓组
-                        try:
-                            self._synth_engine.set_drum_kit(ch, kit=0)
-                        except Exception:
-                            pass
-                    else:
-                        # 其他通道设置为电吉他音色
-                        try:
-                            # 27 = Clean Electric Guitar (MIDI程序号)
-                            self._synth_engine.set_instrument(ch, 27)
-                        except Exception:
-                            pass
+            # [v1.1.1] 不再强制覆盖通道音色。
+            # MidiConverter.convert_all_tracks() 已在每个音轨开头生成
+            # Bank Select + Program Change 事件，音色由 GP 文件本身决定。
+            # 此处强制 set_instrument(ch, 27) 会覆盖 GP7/GP8 解析出的具体音色，
+            # 并在 seek 后导致音色状态丢失、声音发闷。
         else:
             # 仅当前轨: 只转换当前选中的音轨
             self._track_channels = []

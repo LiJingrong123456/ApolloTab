@@ -6,7 +6,8 @@
          包含调弦、乐器设置、所有小节等内容
 
 创建日期: 2026-06-06
-最后更新: 2026-06-28 (v0.4.0: 扩展 GP7/GP8 字段; 调弦名称改为英文硬编码)
+最后更新: 2026-06-28 (v1.1.2: 新增 percussion_articulations 字段,
+                   用于 GP7/GP8 鼓轨 InstrumentArticulation → MIDI note 映射)
 依赖: Python 3.8+ dataclasses
 ============================================================
 """
@@ -14,6 +15,28 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 from .measure import GTPMeasure
+
+
+@dataclass
+class PercussionArticulation:
+    """
+    打击乐 articulation 定义 (GP7/GP8)
+
+    在 GPIF XML 中，每个 <Articulation> 节点定义了一种打击乐演奏法，
+    其中 <OutputMidiNumber> 是该演奏法对应的 GM 标准 MIDI 鼓音编号。
+
+    属性:
+      name:              显示名称(如 "Snare (hit)")
+      element_type:      元素类型(如 "Snare")
+      output_midi_number: GM 标准 MIDI 鼓音(如 38=军鼓)
+      staff_line:        在五线谱/TAB 谱上的行号(仅用于渲染)
+      unique_id:         内部唯一标识(可选)
+    """
+    name: str = ""
+    element_type: str = ""
+    output_midi_number: int = -1
+    staff_line: int = 0
+    unique_id: str = ""
 
 
 @dataclass
@@ -36,7 +59,7 @@ class GTPTrack:
       is_mute:       是否静音
       capo:          变调夹位置 (0=无变调夹)
 
-    GP7/GP8 扩展字段 (v0.4.0 新增):
+    GP7/GP8 扩展字段 (v0.4.0 新增; v1.1.2 新增 percussion_articulations):
       is_percussion:        是否打击乐轨道（GP7 drumKit）
       show_standard_notation: 是否显示五线谱（来自 PartConfiguration，预留渲染接口）
       show_tablature:        是否显示六线谱（默认 True）
@@ -46,6 +69,9 @@ class GTPTrack:
       midi_bank_lsb:         MIDI Bank LSB（音色库选择低7位）
       color:                 音轨颜色（RGBA 元组，GP7 音轨颜色标识）
       short_name:            短名称（用于多轨混排时的简短显示）
+      percussion_articulations: GP7/GP8 鼓轨 articulation 列表，
+                                每个条目含 output_midi_number，
+                                用于把 note.percussion_articulation 索引映射到真实 GM 鼓音
     """
 
     name: str = ""                                      # 轨道名称
@@ -69,6 +95,7 @@ class GTPTrack:
     midi_bank_lsb: int = 0                              # MIDI Bank LSB
     color: Optional[Tuple[int, int, int, int]] = None   # RGBA 颜色
     short_name: str = ""                                # 短名称
+    percussion_articulations: List[PercussionArticulation] = field(default_factory=list)  # 鼓轨 articulation 映射表
 
     @property
     def string_count(self) -> int:

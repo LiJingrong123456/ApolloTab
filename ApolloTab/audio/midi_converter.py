@@ -9,7 +9,8 @@
          [v0.4.1] 兼容 GP7/GP8 新字段(打击乐/力度/连音/重音)
 
 创建日期: 2026-06-07
-最后更新: 2026-06-28 (v1.0.1: 补充音色映射, 发送 Bank Select + Program Change)
+最后更新: 2026-06-28 (v1.0.1: 鼓轨 Bank Select 拆分为 CC#0=1/CC#32=0,
+                   修复 velocity=128 非法值导致鼓组音色不生效问题)
 依赖: Python 3.8+ dataclasses, gtp_engine.models
 设计原则:
   - 时间精度: 使用 tick(脉冲)作为最小时间单位，避免浮点累积误差
@@ -44,9 +45,12 @@ GP7/GP8 兼容性 (v0.4.1-v1.0.1):
   - 力度映射: beat.dynamics 字段(PPP/PP/P/MP/MF/F/FF/FFF) → MIDI velocity
   - 连音时值: beat.tuplet_numerator/denominator 修正实际时长
   - 重音类型: note.accentuated_type (1=Normal, 2=Heavy) 调整力度
-  - 打击乐音高: note.is_percussion + percussion_articulation 直接作为 MIDI 音高
+  - 打击乐音高(v1.0.1+): note.is_percussion + percussion_articulation
+    通过 track.percussion_articulations 映射到 OutputMidiNumber
   - 音色映射(v1.0.1): 每个音轨开头发送 Bank Select(MSB/LSB) + Program Change,
-    GP7/GP8 解析的 bank 保存到 track.midi_bank_msb/lsb, 鼓轨强制 MSB=128+Program=0
+    GP7/GP8 解析的 bank 保存到 track.midi_bank_msb/lsb
+  - 鼓轨 Bank(v1.0.1+): 鼓组 bank 128 拆分为 CC#0=1 / CC#32=0,
+    避免发送 0-127 范围外的非法 CC 值
 ============================================================
 """
 
@@ -269,13 +273,17 @@ class MidiConverter:
         # === Step 2: [v0.4.0] 展开反复记号，获取实际播放顺序 ===
         expanded_indices = self.expand_measure_indices(track.measures)
 
+        # [v1.1.2] 获取 GP7/GP8 鼓轨 articulation 映射表
+        percussion_articulations = getattr(track, 'percussion_articulations', None)
+
         # === Step 3: 按展开顺序遍历小节，生成音符事件 ===
         current_tick = 0  # 当前绝对 tick 位置（从歌曲开头开始累加）
 
         for orig_idx in expanded_indices:
             measure = track.measures[orig_idx]
             measure_events = self._convert_measure(
-                measure, current_tick, self.GUITAR_CHANNEL
+                measure, current_tick, self.GUITAR_CHANNEL,
+                percussion_articulations=percussion_articulations
             )
             events.extend(measure_events)
 
@@ -376,20 +384,32 @@ class MidiConverter:
 
         if self.is_drum_track(track):
             # === 鼓轨: 强制切换到打击乐 Bank 并选择鼓组 Program ===
-            # 与 SynthEngine.set_drum_kit 保持一致: CC#0=128, Program=0
+            # GM 14-bit Bank Select 编码: bank = (MSB << 7) | LSB
+            #   鼓组 bank 128 → MSB=128>>7=1, LSB=128&0x7F=0
+            # 注意: CC 值合法范围是 0-127, 直接发 128 会被 FluidSynth 忽略。
+            # 必须先发 CC#0(MSB) + CC#32(LSB), 再发 Program Change。
+            # 发送顺序: CC#0(MSB) → CC#32(LSB) → Program Change
             events.append(MidiEvent(
                 time=0,
                 type='control_change',
                 channel=channel,
                 pitch=0,          # CC#0 = Bank Select MSB
-                velocity=128,     # Percussion Bank (项目约定)
+                velocity=1,       # 128 >> 7 = 1 (鼓组 Bank MSB)
+                value=0
+            ))
+            events.append(MidiEvent(
+                time=0,
+                type='control_change',
+                channel=channel,
+                pitch=32,         # CC#32 = Bank Select LSB
+                velocity=0,       # 128 & 0x7F = 0 (鼓组 Bank LSB)
                 value=0
             ))
             events.append(MidiEvent(
                 time=0,
                 type='program_change',
                 channel=channel,
-                pitch=0,          # Program 0 = Standard Drum Kit
+                pitch=0,          # Program 0 = Standard Drum Kit (GM 标准)
                 velocity=0,
                 value=0
             ))
@@ -500,12 +520,16 @@ class MidiConverter:
             program_events = self._create_program_events(track, ch)
             all_events.extend(program_events)
 
+            # [v1.1.2] 获取 GP7/GP8 鼓轨 articulation 映射表(用于索引→MIDI note)
+            percussion_articulations = getattr(track, 'percussion_articulations', None)
+
             # 按展开顺序转换该音轨的所有小节
             current_tick = 0
             for orig_idx in expanded_indices:
                 measure = track.measures[orig_idx]
                 measure_events = self._convert_measure(
-                    measure, current_tick, ch
+                    measure, current_tick, ch,
+                    percussion_articulations=percussion_articulations
                 )
                 all_events.extend(measure_events)
                 measure_ticks = self._measure_to_ticks(measure)
@@ -544,16 +568,23 @@ class MidiConverter:
         
         return max_duration
     
-    def _convert_measure(self, measure, start_tick: int, 
-                          channel: int) -> List[MidiEvent]:
+    def _convert_measure(self, measure, start_tick: int,
+                          channel: int,
+                          percussion_articulations: List = None) -> List[MidiEvent]:
         """
         转换单个小节的所有音符为 MIDI 事件
-        
+
+        [v1.1.2] 新增 percussion_articulations 参数:
+          GP7/GP8 鼓轨的 note.percussion_articulation 是索引，
+          需要通过该列表映射到 OutputMidiNumber。
+          不传则保持旧行为（直接用 idx 作为 MIDI pitch）。
+
         参数:
             measure:    GTPMeasure 小节数据
             start_tick: 该小节开始的绝对 tick 位置
             channel:    MIDI 通道
-        
+            percussion_articulations: [v1.1.2] GP7/GP8 鼓轨 articulation 映射表
+
         返回:
             该小节内所有音符的 note_on/note_off 事件列表
         """
@@ -583,7 +614,15 @@ class MidiConverter:
                 # (鼓轨每个 articulation 编号对应 GM 标准鼓音，如 36=底鼓, 38=军鼓)
                 # 普通音符: 使用 note.midi_pitch (弦+品+调弦计算得出)
                 if getattr(note, 'is_percussion', False) and note.percussion_articulation >= 0:
-                    effective_pitch = note.percussion_articulation
+                    # [v1.1.2] GP7/GP8 鼓轨: percussion_articulation 是索引，
+                    # 需通过 track.percussion_articulations 映射到 OutputMidiNumber
+                    idx = note.percussion_articulation
+                    articulations = percussion_articulations or []
+                    if 0 <= idx < len(articulations):
+                        effective_pitch = articulations[idx].output_midi_number
+                    else:
+                        # fallback: 老格式或缺失映射时直接使用 idx
+                        effective_pitch = idx
                 else:
                     effective_pitch = note.midi_pitch
                 
