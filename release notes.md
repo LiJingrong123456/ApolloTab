@@ -1,3 +1,45 @@
+# ApolloTab v1.1.0 - Release Notes
+
+**Release Date**: June 29, 2026
+**Commit**: `d30230e` (Drum Kit Fix + GP7/GP8 Percussion Articulation)
+**Author**: Zhu Wenqian
+**License**: LGPL-2.1 (changed from MPL-2.0)
+
+---
+
+## Overview
+
+ApolloTab v1.1.0 is a **feature & bugfix release** that fixes drum kit sound loading issues and adds GP7/GP8 percussion articulation parsing for accurate drum playback.
+
+### Bug Fix: Drum Kit Sound Loading
+
+**Problem**: CC#0 (Bank Select MSB) was sent with value 128, which is out of the valid MIDI range (0-127). FluidSynth silently ignored this invalid value, causing drum kits to fail to load.
+
+**Fix**:
+- `synth_engine.py`: `set_drum_kit()` now sends valid CC#0=1 and CC#32=0
+- `midi_converter.py`: Drum kit Bank 128 is properly split into 14-bit Bank Select (CC#0 + CC#32)
+
+### New Feature: GP7/GP8 Percussion Articulation Parsing
+
+GP7/GP8 drum tracks use `<Articulation>` nodes to define playing techniques (e.g., "Hit", "Rim Shot", "Ghost Note") mapped to specific MIDI notes. ApolloTab now parses these mappings for accurate drum playback:
+
+- **New `PercussionArticulation` class** (`models/track.py`): Maps GP7/GP8 articulation to GM MIDI note
+- **`gpif_parser.py`**: Parses `<Articulations>` nodes from GPIF XML
+- **`midi_converter.py`**: Uses `percussion_articulations` lookup instead of default drum mapping
+
+### New Feature: BendType / BendStyle / VibratoType Enums
+
+Added enums in `utils/constants.py` to align with alphaTab data structures:
+- `BendType`: Normal, Prebend, Release, etc.
+- `BendStyle`: Bend rendering style
+- `VibratoType`: Slight, Wide, etc.
+
+### Other Changes
+- **Player.py**: Removed forced channel instrument override in `rebuild_audio_events`. Instrument events are now handled exclusively by `midi_converter`.
+- **License**: Changed from MPL-2.0 to LGPL-2.1
+
+---
+
 # ApolloTab v1.0.1 - Release Notes
 
 **Release Date**: June 28, 2026
