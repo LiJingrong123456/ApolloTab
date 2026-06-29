@@ -466,7 +466,7 @@ mypy ApolloTab/
 
 ## License
 
-This project is licensed under the [MPL 2.0](LICENSE).
+This project is licensed under the [LGPL 2.1](LICENSE).
 
 ## Contributing
 
@@ -984,7 +984,7 @@ mypy ApolloTab/
 
 ## 许可证
 
-本项目采用 [MPL 2.0](LICENSE) 开源协议。
+本项目采用 [LGPL 2.0](LICENSE) 开源协议。
 
 ## 贡献
 
