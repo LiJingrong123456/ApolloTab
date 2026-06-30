@@ -38,15 +38,16 @@ ApolloTab - Guitar Pro 文件渲染与播放引擎库
     pages = render_gtp("my_song.gp5", track_index=0)
 
 依赖库:
-  - guitarpro >= 0.11      # GP3-5 文件解析（开源项目: pyguitarpro）
-  - PyQt5 >= 5.15          # GUI渲染（用于生成QPixmap图像）
+  - pyguitarpro >= 0.10.1  # GP3-5 文件解析（开源项目: pyguitarpro）
   - pyfluidsynth >= 1.4.0  # 音频合成（可选，仅音频播放时需要）
+  注: PyQt5 已移出 pip 依赖; ARM 架构需 apt 安装后手动创建软链接
   注: GP7/GP8 (.gp) 解析仅依赖 Python 标准库(zipfile/xml/struct)
 
-版本: v1.0.1 (Phase 5 - GP7/GP8 原生支持, 修复 GPIF String 弦号映射)
-许可证: Mozilla Public License 2.0 (MPL-2.0)
+版本: v1.2.0 (Phase 5 - GP7/GP8 原生支持 + 节拍器功能)
+许可证: GNU Lesser General Public License v2.1 (LGPL-2.1)
 创建日期: 2026-06-06
-最后更新: 2026-06-28 (v1.0.1: 修复 GP7/GP8 GPIF <String> 弦号映射, 0=底线→0=顶线)
+最后更新: 2026-06-30 (v1.2.0: 新增节拍器功能, MetronomeConfig/MetronomeGenerator,
+                   支持 GTP 歌曲模式和手动模式, 通道隔离 MIDI Channel 15)
 ============================================================
 """
 
@@ -69,7 +70,7 @@ from .utils import (
     TECHNIQUE_ABBREVIATION, get_string_name
 )
 
-__version__ = "1.0.1"
+__version__ = "1.2.0"
 __all__ = [
     # ===== 高级API（推荐）=====
     'GTPPlayer',              # 高级播放器封装类（整合所有GTP功能）

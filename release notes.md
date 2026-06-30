@@ -1,3 +1,43 @@
+# ApolloTab v1.2.0 - Release Notes
+
+**Release Date**: June 30, 2026
+**Commit**: `a88724d` (Metronome Support for Audio Playback)
+**Author**: Zhu Wenqian
+**License**: LGPL-2.1
+
+---
+
+## Overview
+
+ApolloTab v1.2.0 adds **built-in metronome support** for audio playback, allowing users to practice with a click track synchronized to the song's tempo and time signature.
+
+### New Feature: Metronome Support
+
+**Design Principles:**
+- **Channel Isolation**: Uses MIDI channel 15 to avoid conflicts with melody tracks (0-8/10-14) and drum track (9)
+- **GM Standard Sounds**: Uses GM standard woodblock sounds (76 Low Woodblock / 77 High Woodblock)
+- **Dual Mode**: Supports both GTP song mode (auto-detect BPM/time signature) and simple mode (manual configuration)
+
+**New Files:**
+- `audio/metronome.py`: Complete metronome MIDI event generator (~302 lines)
+  - `MetronomeConfig`: Configuration class (enabled, volume, numerator, denominator)
+  - `MetronomeGenerator`: Event generator with two methods:
+    - `generate_from_song()`: Auto-extract BPM and time signature from GTP song
+    - `generate_simple()`: Manually specify BPM, time signature, and duration
+
+**Event Generation Rules:**
+- First beat of each measure: High Woodblock (pitch 77) - louder accent
+- Subsequent beats: Low Woodblock (pitch 76) - normal volume
+- Each click lasts approximately 50ms
+- Bank Select + Program Change events inserted at the beginning to configure channel 15
+
+**Integration:**
+- `MidiConverter.convert()`: New `metronome_config` parameter to mix metronome events
+- `GTPPlayer`: New metronome control interface and state management
+- Package exports updated in `__init__.py` and `audio/__init__.py`
+
+---
+
 # ApolloTab v1.1.0 - Release Notes
 
 **Release Date**: June 29, 2026
