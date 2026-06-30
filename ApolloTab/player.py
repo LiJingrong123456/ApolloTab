@@ -54,8 +54,7 @@
   - PyQt5 (QPixmap, 用于图像渲染)
 
 创建日期: 2026-06-12
-最后更新: 2026-06-28 (v1.1.1: 移除 rebuild_audio_events 中强制覆盖音色逻辑,
-                   由 midi_converter 统一处理音色事件)
+最后更新: 2026-06-30 (v1.1.4: 节拍器增加全局 gain 参数)
 ============================================================
 """
 
@@ -69,6 +68,7 @@ from .parser import parse_gtp, parse_score, GTPParser
 from .renderer import TabRenderer
 from .utils import RenderConfig
 from .audio import MidiConverter, MidiEvent, SynthEngine
+from .audio.metronome import MetronomeConfig, MetronomeGenerator
 from .models import GTPSong, GTPTrack
 
 
@@ -140,7 +140,15 @@ class GTPPlayer:
         self._gain = gain
         self._sample_rate = sample_rate
         self._buffer_size = buffer_size
-        
+
+        # ===== [v1.1.3] 节拍器状态 =====
+        self._metronome_enabled: bool = False      # 节拍器开关
+        self._metronome_volume: float = 0.7        # 节拍器音量 (0.0~1.0)
+        self._metronome_gain: float = 2.0          # 节拍器全局增益，解决被乐器掩盖问题
+        self._metronome_config: MetronomeConfig = MetronomeConfig(
+            enabled=False, volume=0.7, gain=2.0
+        )
+
         # ===== 回调函数 =====
         self._note_callback: Optional[Callable] = None  # 音符触发回调
     
@@ -506,18 +514,15 @@ class GTPPlayer:
             True 表示初始化成功，False 表示失败（缺少依赖或SoundFont）
             
         注意:
-          此方法应在 load() 之后调用。
-          失败时不会抛出异常，而是返回 False 并打印警告信息。
+          - 正常应在 load() 之后调用。
+          - [v1.1.3] 无 song 时也可调用，用于图片/PDF 模式下的纯节拍器播放。
+          - 失败时不会抛出异常，而是返回 False 并打印警告信息。
           
         错误处理:
           - ImportError(pyfluidsynth未安装): 返回False，提示安装
           - SoundFont未找到: 返回False，提示放置sf2文件
           - 初始化失败: 返回False，打印详细错误
         """
-        if not self._song:
-            print("[GTPPlayer] 错误: 尚未加载文件，请先调用 load()")
-            return False
-        
         try:
             # === Step 1: 创建 FluidSynth 合成器 ===
             self._synth_engine = SynthEngine(
@@ -525,7 +530,7 @@ class GTPPlayer:
                 sample_rate=self._sample_rate,
                 buffer_size=self._buffer_size
             )
-            
+
             # === Step 2: 初始化音频驱动 ===
             if not self._synth_engine.initialize():
                 print("[GTPPlayer] 错误: FluidSynth 初始化失败")
@@ -534,7 +539,7 @@ class GTPPlayer:
                 print("    Windows: 下载 libfluidsynth-3.dll 放到项目目录")
                 print("    Linux:   sudo apt-get install fluidsynth")
                 return False
-            
+
             # === Step 3: 加载 SoundFont ===
             sf_path = self._synth_engine.load_soundfont()
             if not sf_path:
@@ -543,24 +548,28 @@ class GTPPlayer:
                 print("  建议: 下载 FluidR3_GM.sf2 放到 ./soundfont/ 目录")
             else:
                 print(f"[GTPPlayer] ✓ 已加载 SoundFont: {sf_path}")
-            
+
             # === Step 4: 设置音符回调 ===
             self._note_callback = note_callback
             if note_callback:
                 self._synth_engine.set_note_callback(note_callback)
-            
+
             # === Step 5: 转换并加载 MIDI 事件 ===
-            self.rebuild_audio_events()
-            
-            # 打印就绪信息
-            mode_label = "全轨并轨" if self._audio_mode == self.MODE_ALL else f"仅当前轨"
-            duration_ms = self.get_current_duration_ms()
-            print(f"[GTPPlayer] ✓ 引擎就绪[{mode_label}]: "
-                  f"{len(self._audio_events)}个MIDI事件, "
-                  f"{len(self._track_channels)}个通道, "
-                  f"BPM={self._song.tempo}, "
-                  f"时长={duration_ms / 1000:.1f}秒")
-            
+            # [v1.1.3] 无 song 时(图片/PDF模式仅使用节拍器)跳过事件重建
+            if self._song:
+                self.rebuild_audio_events()
+
+                # 打印就绪信息
+                mode_label = "全轨并轨" if self._audio_mode == self.MODE_ALL else f"仅当前轨"
+                duration_ms = self.get_current_duration_ms()
+                print(f"[GTPPlayer] ✓ 引擎就绪[{mode_label}]: "
+                      f"{len(self._audio_events)}个MIDI事件, "
+                      f"{len(self._track_channels)}个通道, "
+                      f"BPM={self._song.tempo}, "
+                      f"时长={duration_ms / 1000:.1f}秒")
+            else:
+                print("[GTPPlayer] ✓ 引擎就绪(无GTP文件，仅节拍器模式)")
+
             return True
             
         except ImportError as e:
@@ -662,9 +671,12 @@ class GTPPlayer:
         if self._audio_mode == self.MODE_ALL:
             # 全轨并轨: 转换所有音轨
             self._audio_events, self._track_channels = (
-                self._midi_converter.convert_all_tracks(self._song)
+                self._midi_converter.convert_all_tracks(
+                    self._song,
+                    metronome_config=self._metronome_config
+                )
             )
-            
+
             # [v1.1.1] 不再强制覆盖通道音色。
             # MidiConverter.convert_all_tracks() 已在每个音轨开头生成
             # Bank Select + Program Change 事件，音色由 GP 文件本身决定。
@@ -674,7 +686,8 @@ class GTPPlayer:
             # 仅当前轨: 只转换当前选中的音轨
             self._track_channels = []
             self._audio_events = self._midi_converter.convert(
-                self._song, track_index=self._current_track
+                self._song, track_index=self._current_track,
+                metronome_config=self._metronome_config
             )
         
         # 重新加载到合成器
@@ -693,9 +706,85 @@ class GTPPlayer:
                   f"{len(self._track_channels)}个通道")
     
     # ================================================================
+    # [v1.1.3] 节拍器控制
+    # ================================================================
+
+    def set_metronome(self, enabled: bool, volume: float,
+                      gain: float = None) -> None:
+        """
+        设置节拍器开关、音量与全局增益
+
+        参数:
+            enabled: 是否启用节拍器
+            volume:  音量 (0.0 ~ 1.0)，调整效果: 0=静音, 1=最大音量
+            gain:    全局增益 (>=0)，调整效果: 1.0=原音量, 2.0=翻倍,
+                     用于提升木鱼音色在伴奏中的突出程度；None=保持当前值
+
+        说明:
+            - 修改配置后，若已加载 GTP 歌曲且音频引擎可用，会自动重建 MIDI 事件
+            - 图片/PDF 模式下不会触发重建，由主程序在播放时调用 play_metronome_only()
+        """
+        self._metronome_enabled = enabled
+        self._metronome_volume = max(0.0, min(1.0, volume))
+        if gain is not None:
+            self._metronome_gain = max(0.0, gain)
+
+        self._metronome_config.enabled = self._metronome_enabled
+        self._metronome_config.volume = self._metronome_volume
+        self._metronome_config.gain = self._metronome_gain
+
+        # GTP 模式下重建事件，使节拍器立即生效
+        if self._song and self._synth_engine and self._audio_mode != self.MODE_OFF:
+            self.rebuild_audio_events()
+
+    def play_metronome_only(self, bpm: int = 120, numerator: int = 4,
+                            denominator: int = 4,
+                            duration_minutes: int = 10) -> None:
+        """
+        仅播放节拍器（用于图片/PDF 等非 GTP 模式）
+
+        参数:
+            bpm:             每分钟拍数
+            numerator:       拍号分子
+            denominator:     拍号分母
+            duration_minutes: 生成事件的总时长（分钟），默认 10 分钟
+
+        说明:
+            - 调用前需确保已调用 init_audio() 初始化音频引擎
+            - 停止播放由 stop() 统一处理
+        """
+        if not self._synth_engine:
+            return
+
+        if not self._metronome_enabled:
+            return
+
+        # 先生成足够长的节拍器事件
+        ticks_per_beat = self._midi_converter.TICKS_PER_BEAT
+        total_beats = int(bpm * duration_minutes)
+        # 按拍号计算总 tick 数（向上取整到整小节）
+        ticks_per_measure = int(numerator * ticks_per_beat * 4.0 / denominator)
+        measure_count = (total_beats // numerator) + 1
+        total_ticks = measure_count * ticks_per_measure
+
+        events = MetronomeGenerator.generate_simple(
+            bpm=bpm,
+            numerator=numerator,
+            denominator=denominator,
+            total_ticks=total_ticks,
+            ticks_per_beat=ticks_per_beat,
+            config=self._metronome_config
+        )
+
+        if events:
+            self._synth_engine.load_events(events, bpm=bpm,
+                                           ticks_per_beat=ticks_per_beat)
+            self._synth_engine.play()
+
+    # ================================================================
     # 播放控制
     # ================================================================
-    
+
     def play(self) -> None:
         """
         开始播放音频

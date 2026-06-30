@@ -38,16 +38,15 @@ ApolloTab - Guitar Pro 文件渲染与播放引擎库
     pages = render_gtp("my_song.gp5", track_index=0)
 
 依赖库:
-  - pyguitarpro >= 0.10.1  # GP3-5 文件解析（开源项目: pyguitarpro）
+  - guitarpro >= 0.11      # GP3-5 文件解析（开源项目: pyguitarpro）
+  - PyQt5 >= 5.15          # GUI渲染（用于生成QPixmap图像）
   - pyfluidsynth >= 1.4.0  # 音频合成（可选，仅音频播放时需要）
-  注: PyQt5 已移出 pip 依赖; ARM 架构需 apt 安装后手动创建软链接
   注: GP7/GP8 (.gp) 解析仅依赖 Python 标准库(zipfile/xml/struct)
 
-版本: v1.1.0 (Phase 5 - GP7/GP8 原生支持 + 鼓轨 Articulation + 音色库修复)
-许可证: GNU Lesser General Public License v2.1 (LGPL-2.1)
+版本: v1.0.1 (Phase 5 - GP7/GP8 原生支持, 修复 GPIF String 弦号映射)
+许可证: Mozilla Public License 2.0 (MPL-2.0)
 创建日期: 2026-06-06
-最后更新: 2026-06-29 (v1.1.0: 修复鼓组音色失效, 新增 GP7/GP8 鼓轨 Articulation 解析,
-                   新增 BendType/BendStyle/VibratoType 枚举, License 改为 LGPL-2.1)
+最后更新: 2026-06-28 (v1.0.1: 修复 GP7/GP8 GPIF <String> 弦号映射, 0=底线→0=顶线)
 ============================================================
 """
 
@@ -61,6 +60,7 @@ from .parser import (
 from .models import GTPNote, GTPBeat, GTPMeasure, GTPTrack, GTPSong
 from .renderer import TabRenderer, render_gtp, TabLayoutEngine
 from .audio import MidiConverter, MidiEvent, SynthEngine
+from .audio import MetronomeConfig, MetronomeGenerator
 from .player import GTPPlayer, create_gtp_player, render_gtp_to_images
 from .utils import (
     StandardTunings, NoteDuration, TechniqueType,
@@ -69,7 +69,7 @@ from .utils import (
     TECHNIQUE_ABBREVIATION, get_string_name
 )
 
-__version__ = "1.1.0"
+__version__ = "1.0.1"
 __all__ = [
     # ===== 高级API（推荐）=====
     'GTPPlayer',              # 高级播放器封装类（整合所有GTP功能）
@@ -91,6 +91,8 @@ __all__ = [
     'TabRenderer', 'render_gtp', 'TabLayoutEngine',
     # 音频播放
     'MidiConverter', 'MidiEvent', 'SynthEngine',
+    # 节拍器 (v1.1.3新增)
+    'MetronomeConfig', 'MetronomeGenerator',
     # 工具
     'StandardTunings', 'NoteDuration', 'TechniqueType',
     'RenderConfig', 'ThemeConfig',  # v0.2.4新增: 渲染主题配置

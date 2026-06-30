@@ -36,8 +36,10 @@ gtp_engine.audio - 音频播放引擎包
 
 from .midi_converter import MidiConverter, MidiEvent
 from .synth_engine import SynthEngine
+from .metronome import MetronomeConfig, MetronomeGenerator
 
 __all__ = [
     'MidiConverter', 'MidiEvent',
     'SynthEngine',
+    'MetronomeConfig', 'MetronomeGenerator',
 ]

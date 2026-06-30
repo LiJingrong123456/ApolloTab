@@ -60,6 +60,9 @@ from typing import List, Optional, Tuple
 # 导入技巧枚举（用于力度计算和断奏判断）
 from ..utils.constants import TechniqueType
 
+# [v1.1.3] 导入节拍器事件生成器
+from .metronome import MetronomeConfig, MetronomeGenerator
+
 
 @dataclass
 class MidiEvent:
@@ -226,13 +229,15 @@ class MidiConverter:
 
         return result
     
-    def convert(self, song, track_index: int = 0) -> List[MidiEvent]:
+    def convert(self, song, track_index: int = 0,
+                metronome_config: Optional[MetronomeConfig] = None) -> List[MidiEvent]:
         """
         将 GTPSong 的指定音轨转换为 MIDI 事件序列
 
         参数:
-            song:         GTPSong 歌曲数据对象
-            track_index:  要转换的音轨索引(0-based)
+            song:              GTPSong 歌曲数据对象
+            track_index:       要转换的音轨索引(0-based)
+            metronome_config:  [v1.1.3] 节拍器配置，启用时混入节拍器事件
 
         返回:
             List[MidiEvent]: 按时间排序的 MIDI 事件列表
@@ -243,7 +248,8 @@ class MidiConverter:
           3. [v0.4.0] 展开反复记号获取实际播放顺序
           4. 按展开顺序遍历小节→每个拍→每个音符，计算绝对 tick 位置
           5. 为每个非休止符音符生成 note_on + note_off 事件对
-          6. 按时间排序返回完整事件列表
+          6. [v1.1.3] 若启用节拍器，混入节拍器点击事件
+          7. 按时间排序返回完整事件列表
         """
         events: List[MidiEvent] = []
 
@@ -291,7 +297,19 @@ class MidiConverter:
             measure_ticks = self._measure_to_ticks(measure)
             current_tick += measure_ticks
 
-        # === Step 4: 按 time 排序确保时序正确 ===
+        # === Step 6: [v1.1.3] 混入节拍器事件 ===
+        # 节拍器使用独立通道(默认15)，不与旋律/鼓轨冲突
+        if metronome_config is not None and metronome_config.enabled:
+            metro_events = MetronomeGenerator.generate_for_song(
+                song=song,
+                track_index=track_index,
+                config=metronome_config,
+                expanded_indices=expanded_indices,
+                ticks_per_beat=self.TICKS_PER_BEAT
+            )
+            events.extend(metro_events)
+
+        # === Step 7: 按 time 排序确保时序正确 ===
         # 同一时间的事件顺序: 控制/音色设置 → tempo → pitch_bend → note_on → note_off
         # 必须先发送 program_change, 再发送该时刻的音符
         events.sort(key=lambda e: (
@@ -452,7 +470,9 @@ class MidiConverter:
 
         return events
     
-    def convert_all_tracks(self, song) -> Tuple[List[MidiEvent], List[int]]:
+    def convert_all_tracks(self, song,
+                           metronome_config: Optional[MetronomeConfig] = None
+                           ) -> Tuple[List[MidiEvent], List[int]]:
         """
         转换歌曲所有音轨为合并的 MIDI 事件序列（并轨模式）
 
@@ -467,9 +487,11 @@ class MidiConverter:
           - 音轨1 → MIDI通道1
           - ...以此类推，最多支持16个音轨(通道0-15)
           - 超过16个音轨时循环使用通道(取模)
+          - [v1.1.3] 节拍器固定使用通道15，不参与旋律通道循环
 
         参数:
-            song: GTPSong 歌曲数据对象
+            song:              GTPSong 歌曲数据对象
+            metronome_config:  [v1.1.3] 节拍器配置，启用时混入节拍器事件
 
         返回:
             Tuple[events, track_channels]:
@@ -534,6 +556,19 @@ class MidiConverter:
                 all_events.extend(measure_events)
                 measure_ticks = self._measure_to_ticks(measure)
                 current_tick += measure_ticks
+
+        # === [v1.1.3] 混入节拍器事件 ===
+        # 使用第一轨的展开序列计算拍号/BPM（各轨拍号通常一致）
+        if metronome_config is not None and metronome_config.enabled and song.tracks:
+            metro_expanded = self.expand_measure_indices(song.tracks[0].measures)
+            metro_events = MetronomeGenerator.generate_for_song(
+                song=song,
+                track_index=0,
+                config=metronome_config,
+                expanded_indices=metro_expanded,
+                ticks_per_beat=self.TICKS_PER_BEAT
+            )
+            all_events.extend(metro_events)
 
         # 全局排序：所有轨道的事件按时间统一排序
         # 同一 tick 下: 控制/音色 → tempo → pitch_bend → note_on → note_off
