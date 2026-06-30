@@ -2,12 +2,14 @@
 """
 ============================================================
 文件名: constants.py
-功能描述: GTP引擎全局常量定义 - 包含调弦、时值映射、渲染参数等
+功能描述: GTP引擎全局常量定义 - 包含调弦、时值映射、渲染主题、渲染参数等
          所有可调整的渲染参数都在此集中管理，修改后全局生效
+         v1.1.5 新增: ThemeConfig 支持运行时注册自定义主题颜色，
+         使 TAB Score Viewer 的用户主题扩展功能能够同步应用到 ApolloTab 渲染引擎
 
 创建日期: 2026-06-06
-最后更新: 2026-06-28 (v1.1.0: 新增 BendType/BendStyle/VibratoType 枚举,
-                   原 v0.4.0 漏定义导致 gpif_parser.py 导入失败)
+最后更新: 2026-06-30 (v1.1.5: ThemeConfig 新增 register_theme() 运行时主题注册接口;
+                   v1.1.0: 新增 BendType/BendStyle/VibratoType 枚举)
 依赖库: 无（纯常量定义模块）
 ============================================================
 """
@@ -269,6 +271,68 @@ class ThemeConfig:
             dark
         """
         return list(cls.PRESET_THEMES.keys())
+
+    @classmethod
+    def register_theme(cls, name: str, colors: dict) -> 'ThemeConfig':
+        """
+        运行时注册自定义主题（v1.1.5 新增）
+
+        功能:
+          将用户定义的颜色字典注册到 PRESET_THEMES，
+          使 TabRenderer.set_theme(name) / GTPPlayer.set_theme(name) 可以通过字符串名称使用自定义主题。
+          注册时会自动用深色主题的默认值填充缺失的颜色键，保证渲染完整性。
+
+        参数:
+            name:   主题唯一标识符（会被 lower().strip() 规范化）
+            colors: 颜色字典，键为 COLOR_* 格式，值为十六进制颜色字符串
+
+        返回:
+            注册后的 ThemeConfig 实例
+
+        注意:
+          - 为保护内置主题，name 为 "dark" 或 "light" 时会被忽略（返回内置主题实例）
+          - 颜色字典缺失的键会自动使用深色主题默认值填充
+
+        使用示例:
+            >>> custom_colors = {"COLOR_BG": "#FFFDE7", "COLOR_TEXT": "#212121"}
+            >>> ThemeConfig.register_theme("sepia", custom_colors)
+            ThemeConfig(name='sepia', colors=10 params)
+            >>> renderer.set_theme("sepia")  # 通过名称使用自定义主题
+        """
+        name_lower = name.lower().strip()
+
+        # 保护内置主题，不允许覆盖 dark/light
+        if name_lower in ("dark", "light"):
+            print(f"[ThemeConfig] 忽略对内置主题 '{name_lower}' 的覆盖注册")
+            return cls.get_theme(name_lower)
+
+        # 用深色默认值填充缺失键，保证渲染完整性
+        default_colors = cls.PRESET_THEMES.get("dark", {})
+        merged_colors = {**default_colors, **colors}
+
+        # 注册到预设表
+        cls.PRESET_THEMES[name_lower] = merged_colors
+
+        return cls(colors=merged_colors, theme_name=name_lower)
+
+    @classmethod
+    def unregister_theme(cls, name: str) -> bool:
+        """
+        运行时注销自定义主题（v1.1.5 新增）
+
+        参数:
+            name: 要注销的主题名称
+
+        返回:
+            True: 注销成功；False: 主题是内置主题或不存在，未执行注销
+        """
+        name_lower = name.lower().strip()
+        if name_lower in ("dark", "light"):
+            return False
+        if name_lower not in cls.PRESET_THEMES:
+            return False
+        del cls.PRESET_THEMES[name_lower]
+        return True
     
     @property
     def is_dark(self) -> bool:

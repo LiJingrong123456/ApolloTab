@@ -52,24 +52,24 @@ class MetronomeConfig:
     参数说明:
       enabled:          是否启用节拍器
       volume:           音量 (0.0 ~ 1.0)，调整效果: 0=静音, 1=最大音量
-      gain:             全局音量增益 (>=0)，调整效果: 1.0=原音量, 2.0=翻倍,
+      gain:             全局音量增益 (>=0)，调整效果: 1.0=原音量, 1.5=1.5倍,
                         用于解决木鱼音色在其他乐器中不够突出、音量滑块开到最大仍被掩盖的问题
       accent_pitch:     重拍 MIDI 音高，默认 77=High Woodblock
       normal_pitch:     普通拍 MIDI 音高，默认 76=Low Woodblock
       accent_velocity:  重拍基础力度 (0-127)，默认 100
-                        配合 gain=2.0，最大音量时可达 MIDI 上限 127
+                        配合默认 gain=1.5，最大音量时可达 MIDI 上限 127
       normal_velocity:  普通拍基础力度 (0-127)，默认 70
-                        配合 gain=2.0，最大音量时约 112，仍比重拍稍弱，保留区分度
+                        配合默认 gain=1.5，最大音量时约 105，仍比重拍稍弱，保留区分度
       channel:          节拍器专用 MIDI 通道，默认 15，避开旋律/鼓通道
       click_duration_ms: 每个点击声持续时间 (毫秒)，默认 50ms
     """
     enabled: bool = False
     volume: float = 0.7
-    gain: float = 2.0            # 全局增益，解决木鱼音色被掩盖问题；1.0=原音量, 2.0=翻倍
+    gain: float = 1.5            # 全局增益，解决木鱼音色被掩盖问题；1.0=原音量, 1.5=1.5倍
     accent_pitch: int = 77       # GM High Woodblock，重拍
     normal_pitch: int = 76       # GM Low Woodblock，普通拍
-    accent_velocity: int = 100   # 基础重拍力度，配合 gain 可达 127 上限
-    normal_velocity: int = 70    # 基础普通拍力度，配合 gain 约 112，保留重拍区分度
+    accent_velocity: int = 100   # 基础重拍力度，最大音量+默认增益时可达 127 上限
+    normal_velocity: int = 70    # 基础普通拍力度，最大音量+默认增益时约 105，保留重拍区分度
     channel: int = 15            # 避开旋律通道 0-8/10-14 和鼓通道 9
     click_duration_ms: int = 50  # 点击声持续时间，单位毫秒
 
@@ -96,9 +96,10 @@ class MetronomeGenerator:
         """
         创建通道音色设置事件
 
-        将通道切换为 GM 鼓组:
+        将通道切换为 GM 鼓组，并把通道音量开到最大，避免木鱼点击声被其他乐器掩盖:
           - CC#0 (Bank Select MSB) = 1
           - CC#32 (Bank Select LSB) = 0
+          - CC#7 (Channel Volume) = 127
           - Program Change = 0 (Standard Drum Kit)
         """
         # [延迟导入] 避免与 midi_converter 循环导入
@@ -109,6 +110,8 @@ class MetronomeGenerator:
                       pitch=0, velocity=1, value=1),    # CC#0 = Bank MSB
             MidiEvent(time=0, type="control_change", channel=ch,
                       pitch=32, velocity=0, value=0),   # CC#32 = Bank LSB
+            MidiEvent(time=0, type="control_change", channel=ch,
+                      pitch=7, velocity=127, value=127), # CC#7 = Channel Volume, 最大音量
             MidiEvent(time=0, type="program_change", channel=ch,
                       pitch=0, velocity=0, value=0),    # Program = 0, Drum Kit
         ]
