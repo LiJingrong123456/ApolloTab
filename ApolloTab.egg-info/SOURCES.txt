@@ -11,6 +11,7 @@ ApolloTab.egg-info/dependency_links.txt
 ApolloTab.egg-info/requires.txt
 ApolloTab.egg-info/top_level.txt
 ApolloTab/audio/__init__.py
+ApolloTab/audio/metronome.py
 ApolloTab/audio/midi_converter.py
 ApolloTab/audio/synth_engine.py
 ApolloTab/examples/audio_playback.py
