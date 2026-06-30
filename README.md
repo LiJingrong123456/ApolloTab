@@ -16,6 +16,7 @@
 - **Audio Playback**: Real-time MIDI synthesis engine based on FluidSynth with SoundFont support, including Bank Select + Program Change
 - **Repeat Signs**: Full repeat sign (`||:` / `:||`) expansion with playhead timeline synchronization
 - **Metronome**: Built-in metronome support with separate MIDI channel (15), configurable volume and beats
+- **Dynamic Theme Registration**: Runtime theme registration via `ThemeConfig.register_theme()` for custom color schemes
 - **Technique Support**: 18 playing techniques (hammer-on, pull-off, bend, slide, harmonic, vibrato, etc.)
 - **Highly Configurable**: Fully adjustable rendering parameters (line width, spacing, colors, fonts, etc.)
 - **Theme Support**: Built-in light/dark color themes with custom theme extensibility
@@ -494,7 +495,7 @@ Issues and Pull Requests are welcome!
 
 ***
 
-**Version**: v1.2.0
+**Version**: v1.3.0
 **Last Updated**: 2026-06-30
 **Compatibility**: Windows / Linux / macOS (Python 3.8+)
 
@@ -520,6 +521,7 @@ Issues and Pull Requests are welcome!
 - **音频播放**: 基于 FluidSynth 的 MIDI 合成引擎，支持 SoundFont 音色库实时播放，含 Bank Select + Program Change
 - **反复记号**: 完整支持反复记号（`||:` / `:||`）展开与播放光标同步
 - **节拍器**: 内置节拍器功能，独立 MIDI 通道(15)，可配置音量和拍号
+- **动态主题注册**: 运行时主题注册 `ThemeConfig.register_theme()`，支持自定义配色方案
 - **技巧支持**: 18种演奏技巧（击弦、勾弦、推弦、滑音、泛音、颤音等）
 - **高度可配置**: 渲染参数完全可调（线宽、间距、颜色、字体等）
 - **主题支持**: 内置黑白/深色配色方案，支持自定义主题扩展
@@ -1019,6 +1021,6 @@ mypy ApolloTab/
 
 ***
 
-**版本**: v1.2.0
+**版本**: v1.3.0
 **最后更新**: 2026-06-30
 **兼容性**: Windows / Linux / macOS (Python 3.8+)

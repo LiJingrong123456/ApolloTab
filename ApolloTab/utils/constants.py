@@ -8,7 +8,7 @@
          使 TAB Score Viewer 的用户主题扩展功能能够同步应用到 ApolloTab 渲染引擎
 
 创建日期: 2026-06-06
-最后更新: 2026-06-30 (v1.1.5: ThemeConfig 新增 register_theme() 运行时主题注册接口;
+最后更新: 2026-06-30 (v1.3.0: ThemeConfig 新增 register_theme() 运行时主题注册接口;
                    v1.1.0: 新增 BendType/BendStyle/VibratoType 枚举)
 依赖库: 无（纯常量定义模块）
 ============================================================

@@ -16,7 +16,7 @@
   - 内部依赖: gtp_engine.models.*, gtp_engine.utils.constants
 
 创建日期: 2026-06-06
-最后更新: 2026-06-07 (v1.2.2: SystemLayout新增string_count字段, 动态弦数支持)
+最后更新: 2026-06-30 (v1.3.0: SystemLayout新增string_count字段, 动态弦数支持)
 ============================================================
 """
 

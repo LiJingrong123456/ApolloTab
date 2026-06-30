@@ -29,8 +29,8 @@
 调用入口: 由 gp7_parser.py 调用，传入 score.gpif 的 XML 字符串
 
 创建日期: 2026-06-28 (v0.4.0: GP7/GP8 支持)
-最后更新: 2026-06-28 (v1.1.2: 解析 <Articulations> 节点,
-                   将 GP7/GP8 鼓轨 InstrumentArticulation 索引映射到 GM MIDI note)
+最后更新: 2026-06-30 (v1.3.0: 解析 <Articulations> 节点;
+                   修复 GP7/GP8 GPIF String 弦号映射方向)
 依赖: Python 3.8+ 标准库 xml.etree.ElementTree + copy
 ============================================================
 """

@@ -6,7 +6,7 @@
          包含调弦、乐器设置、所有小节等内容
 
 创建日期: 2026-06-06
-最后更新: 2026-06-28 (v1.1.2: 新增 percussion_articulations 字段,
+最后更新: 2026-06-30 (v1.3.0: 新增 percussion_articulations 字段,
                    用于 GP7/GP8 鼓轨 InstrumentArticulation → MIDI note 映射)
 依赖: Python 3.8+ dataclasses
 ============================================================
