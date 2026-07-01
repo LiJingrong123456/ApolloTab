@@ -54,8 +54,10 @@
   - PyQt5 (QPixmap, 用于图像渲染)
 
 创建日期: 2026-06-12
-最后更新: 2026-06-30 (v1.3.0: ThemeConfig 新增 register_theme() 运行时主题注册接口;
-                   节拍器默认 gain 调整为1.5; 新增通道音量 CC 事件)
+最后更新: 2026-07-01 (v1.3.1: 修复播放条与 MIDI 音频不同步的问题,
+                   build_timeline() 改为按 beat.duration_value 累加 tick;
+                   v1.3.0: ThemeConfig 新增 register_theme() 运行时主题注册接口,
+                   节拍器默认 gain 调整为1.5, 新增通道音量 CC 事件)
 ============================================================
 """
 
@@ -1385,9 +1387,6 @@ class GTPPlayer:
                         global_meas_idx += 1
                         continue
                     
-                    n_beats = len(beats_in_measure)
-                    tick_per_beat = measure_ticks // max(n_beats, 1)
-                    
                     # 遍历该小节的所有拍
                     for beat_idx, b_layout in enumerate(beats_in_measure):
                         # === 计算 scroll_y: 每个拍有独立递增的Y位置 ===
@@ -1421,8 +1420,14 @@ class GTPPlayer:
                         }
                         self._playhead_timeline.append(entry)
                         
-                        # 累加时间和tick
-                        current_time_ticks += tick_per_beat
+                        # [v1.3.1修复] 按拍的实际时值累加 tick, 与 MidiConverter 保持一致
+                        # 原理: 原代码用 measure_ticks // n_beats 把每拍均摊,
+                        #       导致四分音符和八分音符占用相同时间, 与 MIDI 事件不同步。
+                        #       现在使用 beat.duration_value (已含附点/连音修正),
+                        #       确保播放条速度与真实音符时值一致。
+                        beat_duration_value = getattr(b_layout.beat, 'duration_value', 1.0)
+                        beat_duration_ticks = int(ticks_per_beat * beat_duration_value)
+                        current_time_ticks += max(beat_duration_ticks, 1)
                         current_time_ms = current_time_ticks * ms_per_tick
                     
                     # [v2.0.6修复] 每处理完一个小节，全局ID递增(确保跨系统/页唯一)
