@@ -678,6 +678,10 @@ class SynthEngine:
 
         原理: 设置暂停标志，播放线程中的 sleep 会被中断，
               恢复时可从暂停处继续。
+
+        注意: [v1.3.1] 暂停只影响主 MIDI 流（歌曲旋律/鼓）,
+              不暂停节拍器线程。节拍器会继续按自身时间基准发出 click 声,
+              便于用户在暂停歌曲时继续跟着节拍练习。
         """
         with self._lock:
             if not self._is_playing or self._is_paused:
@@ -687,12 +691,17 @@ class SynthEngine:
             self._current_time_ms = self.current_time_ms  # 冻结当前位置
             self._pause_event.clear()  # 触发暂停(阻塞播放线程)
 
-        # [解耦] 同步暂停节拍器线程
-        self.set_metronome_paused(True)
-    
+        # [解耦] 暂停只影响主 MIDI 流；节拍器保持独立播放，
+        # 拥有自己的时间基准 _metronome_start_perf，暂停主线程不会影响它
+        # （如需单独停止节拍器，可显式调用 set_metronome_paused(True)）
+
     def resume(self) -> None:
         """
         从暂停位置恢复播放
+
+        注意: [v1.3.1] 仅恢复主 MIDI 流，节拍器不受影响。
+              若节拍器此前一直独立播放，则会继续按自身时间推进；
+              若调用方曾在暂停期间单独暂停过节拍器，需自行恢复。
         """
         with self._lock:
             if not self._is_paused:
@@ -703,8 +712,7 @@ class SynthEngine:
             self._is_paused = False
             self._pause_event.set()  # 清除暂停(唤醒播放线程)
 
-        # [解耦] 同步恢复节拍器线程
-        self.set_metronome_paused(False)
+        # [解耦] 主 MIDI 流恢复即可；节拍器有独立暂停控制，pause() 不再联动它
     
     def stop(self) -> None:
         """
