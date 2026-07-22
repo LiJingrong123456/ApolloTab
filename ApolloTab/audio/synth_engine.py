@@ -682,13 +682,20 @@ class SynthEngine:
         注意: [v1.3.1] 暂停只影响主 MIDI 流（歌曲旋律/鼓）,
               不暂停节拍器线程。节拍器会继续按自身时间基准发出 click 声,
               便于用户在暂停歌曲时继续跟着节拍练习。
+
+        [v1.3.1 关键修复] 必须先读取 current_time_ms(此时 _is_paused 仍为 False,
+        property 返回基于 perf_counter 的实时值),再设置 _is_paused = True。
+        否则读取时 property 会因为 _is_paused=True 而直接返回 _current_time_ms 的旧值(0),
+        导致暂停位置丢失，恢复后从头开始。
         """
         with self._lock:
             if not self._is_playing or self._is_paused:
                 return
 
+            # [v1.3.1 关键修复] 先读取实时位置(此时 _is_paused=False, property 返回计算值)
+            paused_position = self.current_time_ms
             self._is_paused = True
-            self._current_time_ms = self.current_time_ms  # 冻结当前位置
+            self._current_time_ms = paused_position  # 冻结当前位置
             self._pause_event.clear()  # 触发暂停(阻塞播放线程)
 
         # [解耦] 暂停只影响主 MIDI 流；节拍器保持独立播放，
@@ -702,13 +709,26 @@ class SynthEngine:
         注意: [v1.3.1] 仅恢复主 MIDI 流，节拍器不受影响。
               若节拍器此前一直独立播放，则会继续按自身时间推进；
               若调用方曾在暂停期间单独暂停过节拍器，需自行恢复。
+
+        关键: 调整 _start_time 使 elapsed 从暂停位置继续增长，
+              而非从 0 重启（否则 current_time_ms 会跳回 _initial_time_offset，
+              _wait_until 中的相对时间计算也会失真，导致歌曲"从头开始"）。
         """
         with self._lock:
             if not self._is_paused:
                 return
 
-            # 调整开始时间以扣除暂停前的已播放时长
-            self._start_time = time.perf_counter()
+            # [v1.3.1 关键修复] 调整 _start_time，使 elapsed 正确反映暂停位置
+            # 公式推导:
+            #   current_time_ms = elapsed - _paused_duration + _initial_time_offset
+            #   elapsed = (now - _start_time) * 1000
+            #   在恢复瞬间，我们希望 current_time_ms == self._current_time_ms（暂停位置）
+            #   => _start_time = now - (_current_time_ms - _initial_time_offset + _paused_duration) / 1000
+            self._start_time = time.perf_counter() - (
+                self._current_time_ms
+                - getattr(self, '_initial_time_offset', 0)
+                + self._paused_duration
+            ) / 1000.0
             self._is_paused = False
             self._pause_event.set()  # 清除暂停(唤醒播放线程)
 
@@ -1449,14 +1469,18 @@ class SynthEngine:
     def _wait_until(self, target_relative_ms: float) -> None:
         """
         精确等待到指定的相对时间位置(毫秒)
-        
+
         使用自适应 sleep 策略保证时间精度:
           1. 先 sleep 到目标时间前 5ms
           2. 然后 busy-wait(spinning) 到精确时刻
           3. 支持 pause/resume 中断
-        
+
         参数:
             target_relative_ms: 相对于播放开始的毫秒时间
+
+        [v1.3.1] 暂停恢复后 _start_time 由 resume() 调整，
+                  此处不再重置 _start_time（否则会覆盖 resume 的修正，
+                  导致 current_time_ms 跳回 _initial_time_offset）。
         """
         while True:
             # 检查暂停/停止
@@ -1464,9 +1488,9 @@ class SynthEngine:
                 return
             if self._is_paused:
                 self._pause_event.wait()
-                # 恢复后重新校准开始时间
-                with self._lock:
-                    self._start_time = time.perf_counter()
+                # [v1.3.1] 不再重置 _start_time：
+                # 暂停期间累计的时间已经反映在 elapsed = (now - _start_time)*1000 中
+                # （resume() 中已将 _start_time 设为合适的值，使 elapsed 从暂停位置继续）
                 continue
             
             # 计算已播放的时间
