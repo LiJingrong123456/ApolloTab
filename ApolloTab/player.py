@@ -758,6 +758,12 @@ class GTPPlayer:
         行为:
           - 若 _metronome_enabled 为 False: 卸载节拍器事件
           - 若 True: 根据当前播放位置/歌曲信息生成节拍器事件并独立加载
+
+        [对齐] 播放中开启节拍器时不卡顿:
+          - 用 bisect 计算 start_index（跳过已过去的事件索引）
+          - 把 start_offset_ms + start_index 一起传给 SynthEngine
+          - 配合 SynthEngine.load_metronome_events() 内部对 start_perf 的偏移修正，
+            首事件会在毫秒级延迟内立刻发声，不会卡 30 秒
         """
         if not self._synth_engine:
             return
@@ -768,6 +774,7 @@ class GTPPlayer:
 
         # GTP 模式: 根据当前音轨的展开序列生成节拍器事件
         if self._song and self._song.tracks:
+            import bisect
             ticks_per_beat = self._midi_converter.TICKS_PER_BEAT
             track_idx = min(self._current_track, len(self._song.tracks) - 1)
             # 复用 _expanded_measure_indices (在 rebuild_audio_events 中已缓存)
@@ -791,29 +798,37 @@ class GTPPlayer:
                     den = 4
                 total_ticks += int(num * ticks_per_beat * 4.0 / den)
 
-            # 播放中开启: 对齐到主播放位置
+            # [对齐] 播放中开启: 用 bisect 找到第一个 time > start_offset_ticks 的事件
+            # 跳过这些已过去的事件，避免节拍器线程遍历大量旧事件导致卡顿
             start_offset_ms = 0.0
+            start_index = 0
             if self._synth_engine.is_playing:
                 cur_ms = self._synth_engine.current_time_ms
                 bpm = self._song.tempo or 120
                 if bpm <= 0:
                     bpm = 120
-                # 将"主播放位置(毫秒)"换算成"节拍器 tick 偏移"作为对齐
-                # tick = ms * bpm / 60 / 1000 * ticks_per_beat
+                # 将"主播放位置(毫秒)"换算成"tick 偏移"
                 start_offset_ticks = (
                     cur_ms / 1000.0 * bpm / 60.0 * ticks_per_beat
                 )
-                # 转为毫秒 (节拍器 ms = ticks * 60000 / (bpm * ticks_per_beat))
+                # 还原为毫秒(传给 SynthEngine)
                 start_offset_ms = (
                     start_offset_ticks * 60000.0 / (bpm * ticks_per_beat)
                 )
+                # bisect_right 找第一个 time > start_offset_ticks 的事件
+                # 这样既能跳过该 tick 之前的 note_on，也能跳过对应 note_off
+                # （note_off 在 note_on 之后几个 tick，但仍在同一 click 内）
+                if events:
+                    times = [e.time for e in events]
+                    start_index = bisect.bisect_right(times, start_offset_ticks)
 
             self._synth_engine.load_metronome_events(
                 events=events,
                 bpm=self._song.tempo or 120,
                 ticks_per_beat=ticks_per_beat,
                 total_ticks=total_ticks,
-                start_offset_ms=start_offset_ms
+                start_offset_ms=start_offset_ms,
+                start_index=start_index
             )
         else:
             # 非 GTP 模式: 保持现有行为，由 play_metronome_only() 启动
@@ -865,7 +880,8 @@ class GTPPlayer:
             bpm=bpm,
             ticks_per_beat=ticks_per_beat,
             total_ticks=total_ticks,
-            start_offset_ms=0.0
+            start_offset_ms=0.0,
+            start_index=0
         )
 
     # ================================================================

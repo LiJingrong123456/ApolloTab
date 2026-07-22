@@ -177,7 +177,8 @@ class SynthEngine:
         self._metronome_ticks_per_beat: int = 480      # 每拍 tick 数
         self._metronome_total_ticks: int = 0           # 总 tick 上限（用于"仅节拍器"模式计时）
         self._metronome_start_offset_ms: float = 0.0   # 起始跳过偏移（毫秒），用于播放中开启节拍器时对齐主播放位置
-        self._metronome_start_perf: float = 0.0        # 节拍器线程的 perf_counter 起点
+        self._metronome_start_index: int = 0           # 起始事件索引（跳过已过去的 N 个事件，避免遍历大量旧事件卡顿）
+        self._metronome_start_perf: float = 0.0        # 节拍器线程的 perf_counter 起点（已减去 start_offset_ms/1000 使 elapsed_ms 与歌曲时间轴对齐）
         self._metronome_thread: Optional[threading.Thread] = None  # 节拍器播放线程
         self._metronome_stop_flag: bool = False        # 节拍器停止信号
         self._metronome_paused: bool = False           # 节拍器是否暂停（独立于主暂停）
@@ -783,7 +784,8 @@ class SynthEngine:
     def load_metronome_events(self, events: list, bpm: int = 120,
                               ticks_per_beat: int = 480,
                               total_ticks: int = 0,
-                              start_offset_ms: float = 0.0) -> None:
+                              start_offset_ms: float = 0.0,
+                              start_index: int = 0) -> None:
         """
         加载节拍器事件序列并启动独立播放线程
 
@@ -791,6 +793,14 @@ class SynthEngine:
           - 不修改 self._events
           - 不调用 rebuild_audio_events
           - 通过独立线程驱动播放
+
+        [对齐] 解决"播放中开启节拍器时首事件卡 30 秒"问题:
+          - start_offset_ms: 起始跳过毫秒数（= 主播放位置）
+          - start_index:     起始事件索引（跳过已过去的 N 个事件）
+          两者配合使用: 线程从 start_index 开始遍历，
+          start_perf 也减去 start_offset_ms/1000 使 elapsed_ms 直接对应
+          "歌曲时间轴上 start_offset 之后经过的毫秒数"，
+          否则首事件会等待 start_offset_ms 才发声（卡顿）。
 
         参数:
             events:         MidiEvent 对象列表（由 MetronomeGenerator 生成）
@@ -800,6 +810,8 @@ class SynthEngine:
             start_offset_ms: 起始跳过毫秒数；用于播放中途开启节拍器时
                             自动跳过早于当前主播放位置的节拍器事件，
                             让节拍器与主播放位置对齐
+            start_index:    起始事件索引（已基于 start_offset_ms 算好）
+                            线程从该索引开始遍历，避免从头跳过大量事件
         """
         with self._lock:
             # 先停止旧节拍器线程（如果存在）
@@ -815,6 +827,8 @@ class SynthEngine:
             self._metronome_ticks_per_beat = ticks_per_beat
             self._metronome_total_ticks = total_ticks
             self._metronome_start_offset_ms = max(0.0, start_offset_ms)
+            # 防御: 限制 start_index 在 [0, len(events)] 范围内
+            self._metronome_start_index = max(0, min(start_index, len(events)))
             self._metronome_stop_flag = False
             self._metronome_paused = False
             self._metronome_pause_event.set()
@@ -822,9 +836,17 @@ class SynthEngine:
         # 启动独立线程
         if not self._metronome_events:
             return
+        if self._metronome_start_index >= len(self._metronome_events):
+            # 所有事件都已过去，无需启动线程
+            return
         if not self._synth:
             return
-        self._metronome_start_perf = time.perf_counter()
+        # 关键: start_perf 必须减去 start_offset_ms/1000
+        # 这样 elapsed_ms = (now - start_perf) * 1000 在线程启动瞬间
+        # 正好等于 start_offset_ms (即"歌曲当前时间")，
+        # 后续 wait_ms = target_ms - elapsed_ms 就能直接算对，
+        # 避免"首事件等 start_offset_ms 毫秒才发声"的问题
+        self._metronome_start_perf = time.perf_counter() - self._metronome_start_offset_ms / 1000.0
         self._metronome_thread = threading.Thread(
             target=self._metronome_loop, daemon=True
         )
@@ -885,9 +907,12 @@ class SynthEngine:
 
         与主 _play_loop 的差异:
           - 独立的时间基准: 使用 _metronome_start_perf + _metronome_bpm 计算
+            (start_perf 已减去 start_offset_ms/1000，使 elapsed_ms 直接
+             对应"歌曲时间轴上 start_offset 之后经过的毫秒数")
           - 独立的暂停/停止标志: 不与主线程共享
           - 不参与 A/B 循环: 节拍器持续推进，符合真实指挥的 click track 行为
-          - 自动跳过 start_offset_ms 之前的事件，避免播放中途开启时回放历史
+          - 从 start_index 开始遍历: 已通过 bisect 跳过已过去的事件，
+            避免"播放中开启节拍器时遍历大量旧事件导致卡 30 秒"问题
           - 共享 _send_event: 节拍器事件仍走同一条 FluidSynth 发送路径
             （节拍器使用专用通道 15，与主通道 0-14 不冲突）
         """
@@ -898,11 +923,13 @@ class SynthEngine:
             self._metronome_bpm * self._metronome_ticks_per_beat, 1
         )
         start_offset_ms = self._metronome_start_offset_ms
-        start_perf = self._metronome_start_perf
+        start_perf = self._metronome_start_perf  # 已修正（减去 start_offset_ms/1000）
         total_ticks = self._metronome_total_ticks
         total_ms = total_ticks * ms_per_tick if total_ticks > 0 else float('inf')
 
-        evt_idx = 0
+        # [对齐] 关键修复: 从 start_index 开始迭代（而不是从 0）
+        # 配合 start_perf 的偏移修正，节拍器在播放中开启时不会卡顿
+        evt_idx = self._metronome_start_index
         num_events = len(self._metronome_events)
 
         try:
@@ -916,7 +943,7 @@ class SynthEngine:
                 if self._metronome_paused:
                     self._metronome_pause_event.wait()
                     # 恢复后重新校准时间基准
-                    start_perf = time.perf_counter()
+                    start_perf = time.perf_counter() - start_offset_ms / 1000.0
                     with self._lock:
                         if self._metronome_stop_flag:
                             break
@@ -933,23 +960,13 @@ class SynthEngine:
                 # === 计算事件的目标时间 ===
                 target_ms = evt.time * ms_per_tick
 
-                # 起始跳过: 早于 start_offset_ms 的事件直接跳过
-                # （仅对非 note_off 跳过，避免悬挂的长音）
-                if target_ms < start_offset_ms:
-                    if evt.type == "note_off":
-                        # 仍需执行以关闭可能悬挂的 note_on
-                        if self._synth:
-                            try:
-                                self._synth.noteoff(evt.channel, evt.pitch)
-                            except Exception:
-                                pass
-                    continue
-
                 # 总时长上限（仅节拍器模式）
                 if target_ms > total_ms:
                     break
 
                 # === 计算等待时间 ===
+                # 由于 start_perf 已修正，elapsed_ms 起步即 ≈ start_offset_ms
+                # 所以 wait_ms = target_ms - elapsed_ms 直接得到正确等待时长
                 elapsed_ms = (time.perf_counter() - start_perf) * 1000.0
                 wait_ms = target_ms - elapsed_ms
                 if wait_ms > 0:
