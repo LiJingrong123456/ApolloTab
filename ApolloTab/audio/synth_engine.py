@@ -165,7 +165,25 @@ class SynthEngine:
         self._loop_enabled: bool = False      # 是否启用A/B区域循环
         self._loop_start_ms: float = 0.0      # 循环起始时间(毫秒)，对应A点所在小节的起始拍
         self._loop_end_ms: float = 0.0        # 循环结束时间(毫秒)，对应B点所在小节的末尾拍
-        
+
+        # === [解耦] 节拍器独立事件流与播放线程 ===
+        # 原理: 节拍器事件不再混入主事件流，由独立线程驱动播放。
+        #       主线程切换节拍器开关/音量时无需重建主事件流，
+        #       节拍器线程与主线程共享同一 FluidSynth 合成器输出
+        #       （通过不同 MIDI 通道避免 note_on/note_off 冲突），
+        #       但拥有独立的时间基准与播放控制状态。
+        self._metronome_events: List = []              # 节拍器事件（与 _events 互不影响）
+        self._metronome_bpm: int = 120                 # 节拍器播放速度
+        self._metronome_ticks_per_beat: int = 480      # 每拍 tick 数
+        self._metronome_total_ticks: int = 0           # 总 tick 上限（用于"仅节拍器"模式计时）
+        self._metronome_start_offset_ms: float = 0.0   # 起始跳过偏移（毫秒），用于播放中开启节拍器时对齐主播放位置
+        self._metronome_start_perf: float = 0.0        # 节拍器线程的 perf_counter 起点
+        self._metronome_thread: Optional[threading.Thread] = None  # 节拍器播放线程
+        self._metronome_stop_flag: bool = False        # 节拍器停止信号
+        self._metronome_paused: bool = False           # 节拍器是否暂停（独立于主暂停）
+        self._metronome_pause_event = threading.Event()  # 节拍器暂停事件
+        self._metronome_pause_event.set()              # 初始为非暂停状态
+
         # === 锁 ===
         self._lock = threading.RLock()  # 可重入锁，保护共享状态
     
@@ -656,17 +674,20 @@ class SynthEngine:
     def pause(self) -> None:
         """
         暂停播放(保持当前进度位置)
-        
+
         原理: 设置暂停标志，播放线程中的 sleep 会被中断，
               恢复时可从暂停处继续。
         """
         with self._lock:
             if not self._is_playing or self._is_paused:
                 return
-            
+
             self._is_paused = True
             self._current_time_ms = self.current_time_ms  # 冻结当前位置
             self._pause_event.clear()  # 触发暂停(阻塞播放线程)
+
+        # [解耦] 同步暂停节拍器线程
+        self.set_metronome_paused(True)
     
     def resume(self) -> None:
         """
@@ -675,11 +696,14 @@ class SynthEngine:
         with self._lock:
             if not self._is_paused:
                 return
-            
+
             # 调整开始时间以扣除暂停前的已播放时长
             self._start_time = time.perf_counter()
             self._is_paused = False
             self._pause_event.set()  # 清除暂停(唤醒播放线程)
+
+        # [解耦] 同步恢复节拍器线程
+        self.set_metronome_paused(False)
     
     def stop(self) -> None:
         """
@@ -705,7 +729,10 @@ class SynthEngine:
         
         # 停止所有正在发声的音符（使用优化后的方法）
         self.silence_all_notes()
-        
+
+        # [解耦] 同步停止节拍器线程
+        self._stop_metronome_thread()
+
         # 等待播放线程结束
         if self._play_thread and self._play_thread.is_alive():
             self._play_thread.join(timeout=2.0)
@@ -741,7 +768,239 @@ class SynthEngine:
             self._loop_enabled = False
             self._loop_start_ms = 0.0
             self._loop_end_ms = 0.0
-    
+
+    # ================================================================
+    # [解耦] 节拍器独立事件流 API
+    # ================================================================
+    #
+    # 设计目标: 节拍器事件不再与主事件流混合。
+    # 调用方 (GTPPlayer) 先生成节拍器事件，然后通过
+    #   - load_metronome_events()    加载并启动独立线程
+    #   - unload_metronome_events()  停止并清空节拍器事件
+    # 两个 API 来控制节拍器。主线程切换音轨/模式时不必再触发节拍器重建。
+    #
+
+    def load_metronome_events(self, events: list, bpm: int = 120,
+                              ticks_per_beat: int = 480,
+                              total_ticks: int = 0,
+                              start_offset_ms: float = 0.0) -> None:
+        """
+        加载节拍器事件序列并启动独立播放线程
+
+        [解耦] 与主事件流完全独立:
+          - 不修改 self._events
+          - 不调用 rebuild_audio_events
+          - 通过独立线程驱动播放
+
+        参数:
+            events:         MidiEvent 对象列表（由 MetronomeGenerator 生成）
+            bpm:            播放速度
+            ticks_per_beat: 每四分音符 tick 数
+            total_ticks:    总 tick 上限；用于"仅节拍器"模式的播完停止判断
+            start_offset_ms: 起始跳过毫秒数；用于播放中途开启节拍器时
+                            自动跳过早于当前主播放位置的节拍器事件，
+                            让节拍器与主播放位置对齐
+        """
+        with self._lock:
+            # 先停止旧节拍器线程（如果存在）
+            self._metronome_stop_flag = True
+            self._metronome_pause_event.set()  # 唤醒以让线程退出
+
+        if self._metronome_thread and self._metronome_thread.is_alive():
+            self._metronome_thread.join(timeout=1.0)
+
+        with self._lock:
+            self._metronome_events = list(events)  # 浅拷贝
+            self._metronome_bpm = bpm
+            self._metronome_ticks_per_beat = ticks_per_beat
+            self._metronome_total_ticks = total_ticks
+            self._metronome_start_offset_ms = max(0.0, start_offset_ms)
+            self._metronome_stop_flag = False
+            self._metronome_paused = False
+            self._metronome_pause_event.set()
+
+        # 启动独立线程
+        if not self._metronome_events:
+            return
+        if not self._synth:
+            return
+        self._metronome_start_perf = time.perf_counter()
+        self._metronome_thread = threading.Thread(
+            target=self._metronome_loop, daemon=True
+        )
+        self._metronome_thread.start()
+
+    def unload_metronome_events(self) -> None:
+        """
+        停止节拍器线程并清空节拍器事件列表
+
+        调用场景:
+          - 用户禁用节拍器
+          - 切换为 MODE_OFF
+          - shutdown 时
+        """
+        self._stop_metronome_thread()
+        with self._lock:
+            self._metronome_events = []
+            self._metronome_total_ticks = 0
+            self._metronome_start_offset_ms = 0.0
+
+    def _stop_metronome_thread(self) -> None:
+        """内部方法：仅停止线程，保留事件数据（用于后续快速重启）"""
+        with self._lock:
+            self._metronome_stop_flag = True
+            self._metronome_pause_event.set()  # 唤醒阻塞中的线程
+        if self._metronome_thread and self._metronome_thread.is_alive():
+            self._metronome_thread.join(timeout=1.0)
+        with self._lock:
+            self._metronome_paused = False
+            self._metronome_pause_event.set()
+
+    def set_metronome_paused(self, paused: bool) -> None:
+        """
+        独立设置节拍器的暂停状态（不影响主播放线程）
+
+        用途: 主线程的 pause()/resume() 会自动联动调用此方法，
+              但外部代码也可独立控制节拍器暂停（例如练习时只让节拍器停）。
+        """
+        with self._lock:
+            self._metronome_paused = paused
+            if paused:
+                self._metronome_pause_event.clear()
+            else:
+                # 恢复时重置节拍器时间基准（避免暂停期间累积的漂移）
+                self._metronome_start_perf = time.perf_counter()
+                self._metronome_pause_event.set()
+
+    @property
+    def is_metronome_active(self) -> bool:
+        """节拍器线程是否正在运行"""
+        return (self._metronome_thread is not None
+                and self._metronome_thread.is_alive()
+                and not self._metronome_stop_flag)
+
+    def _metronome_loop(self) -> None:
+        """
+        节拍器独立播放循环（独立线程运行）
+
+        与主 _play_loop 的差异:
+          - 独立的时间基准: 使用 _metronome_start_perf + _metronome_bpm 计算
+          - 独立的暂停/停止标志: 不与主线程共享
+          - 不参与 A/B 循环: 节拍器持续推进，符合真实指挥的 click track 行为
+          - 自动跳过 start_offset_ms 之前的事件，避免播放中途开启时回放历史
+          - 共享 _send_event: 节拍器事件仍走同一条 FluidSynth 发送路径
+            （节拍器使用专用通道 15，与主通道 0-14 不冲突）
+        """
+        if not self._metronome_events or not self._synth:
+            return
+
+        ms_per_tick = 60000.0 / max(
+            self._metronome_bpm * self._metronome_ticks_per_beat, 1
+        )
+        start_offset_ms = self._metronome_start_offset_ms
+        start_perf = self._metronome_start_perf
+        total_ticks = self._metronome_total_ticks
+        total_ms = total_ticks * ms_per_tick if total_ticks > 0 else float('inf')
+
+        evt_idx = 0
+        num_events = len(self._metronome_events)
+
+        try:
+            while evt_idx < num_events:
+                # === 检查停止信号 ===
+                with self._lock:
+                    if self._metronome_stop_flag:
+                        break
+
+                # === 检查暂停 ===
+                if self._metronome_paused:
+                    self._metronome_pause_event.wait()
+                    # 恢复后重新校准时间基准
+                    start_perf = time.perf_counter()
+                    with self._lock:
+                        if self._metronome_stop_flag:
+                            break
+                    continue
+
+                evt = self._metronome_events[evt_idx]
+                evt_idx += 1
+
+                # === 再次检查停止（事件可能耗时后回到循环顶）===
+                with self._lock:
+                    if self._metronome_stop_flag:
+                        break
+
+                # === 计算事件的目标时间 ===
+                target_ms = evt.time * ms_per_tick
+
+                # 起始跳过: 早于 start_offset_ms 的事件直接跳过
+                # （仅对非 note_off 跳过，避免悬挂的长音）
+                if target_ms < start_offset_ms:
+                    if evt.type == "note_off":
+                        # 仍需执行以关闭可能悬挂的 note_on
+                        if self._synth:
+                            try:
+                                self._synth.noteoff(evt.channel, evt.pitch)
+                            except Exception:
+                                pass
+                    continue
+
+                # 总时长上限（仅节拍器模式）
+                if target_ms > total_ms:
+                    break
+
+                # === 计算等待时间 ===
+                elapsed_ms = (time.perf_counter() - start_perf) * 1000.0
+                wait_ms = target_ms - elapsed_ms
+                if wait_ms > 0:
+                    if not self._metronome_wait(wait_ms):
+                        # 返回 False 表示收到停止信号
+                        break
+                # 若 wait_ms <= 0 则立即发送（事件在"过去"时）
+                # 这是为了 start_offset 边界或主线程被阻塞时仍能正确发声
+
+                # === 发送事件 ===
+                self._send_event(evt)
+
+        except Exception as e:
+            print(f"[SynthEngine] 节拍器线程异常: {e}")
+
+    def _metronome_wait(self, wait_ms: float) -> bool:
+        """
+        节拍器专用等待（支持暂停/停止中断）
+
+        参数:
+            wait_ms: 等待毫秒数
+
+        返回:
+            True=正常完成等待, False=收到停止信号
+        """
+        deadline_perf = time.perf_counter() + wait_ms / 1000.0
+        while True:
+            with self._lock:
+                if self._metronome_stop_flag:
+                    return False
+                paused = self._metronome_paused
+            if paused:
+                self._metronome_pause_event.wait()
+                # 恢复后重新校准 deadline
+                deadline_perf = time.perf_counter() + max(
+                    (deadline_perf - time.perf_counter()), 0.0
+                )
+                continue
+
+            remaining = (deadline_perf - time.perf_counter()) * 1000.0
+            if remaining <= 0:
+                return True
+            elif remaining > 5:
+                # 短时 sleep 让出 CPU；同时允许被暂停事件唤醒
+                self._metronome_pause_event.wait(
+                    timeout=min(remaining - 2, 10) / 1000.0
+                )
+            else:
+                # 接近 deadline，busy-wait
+                self._metronome_pause_event.wait(timeout=0.001)
+
     def silence_all_notes(self) -> None:
         """
         静音所有正在发声的音符(不停止播放线程，仅清除当前声音)
@@ -1141,12 +1400,15 @@ class SynthEngine:
     def shutdown(self) -> None:
         """
         关闭合成引擎并释放所有资源
-        
+
         原理: 停止播放 → 卸载 SoundFont → 关闭音频驱动 → 销毁合成器实例
         此方法应在程序退出时调用以确保资源正确释放。
         """
         self.stop()
-        
+
+        # [解耦] 同步关闭节拍器线程
+        self.unload_metronome_events()
+
         if self._synth:
             try:
                 if self._sfid >= 0:
