@@ -1491,6 +1491,7 @@ class GTPPlayer:
                     # 遍历该小节的所有拍
                     # [v1.3.2修复] 记录小节起始 tick，用于末尾对齐 measure_ticks
                     measure_start_ticks = current_time_ticks
+                    last_beat_scroll_y = page_base_y  # [v1.3.3修复] 记录小节最后一拍 scroll_y
                     for beat_idx, b_layout in enumerate(beats_in_measure):
                         # === 计算 scroll_y: 每个拍有独立递增的Y位置 ===
                         sys_beats_count = sum(len(m.beats) for m in system.measures)
@@ -1505,6 +1506,7 @@ class GTPPlayer:
                             page_base_y
                             + (system.y_tab_top + rel_pos * sys_h_render) * page_scale_ratio
                         )
+                        last_beat_scroll_y = scroll_y  # 记住最后一拍位置
                         
                         # 构建时间线索引条目
                         entry = {
@@ -1541,14 +1543,44 @@ class GTPPlayer:
                     current_time_ticks = measure_start_ticks + measure_ticks
                     current_time_ms = current_time_ticks * ms_per_tick
                     
+                    # [v1.3.3修复] 在小节末尾添加哨兵 entry
+                    # 原因: time_to_scroll_pos 用 bisect_right + 线性插值, 
+                    #       若 timeline 中只有"拍起始"entry，最后一拍后到小节结束的
+                    #       空白期会被插值到"下一小节第一拍"的 scroll_y，导致播放条
+                    #       "从最后一个音直接跳到下一小节第一个音"（中间空白未走）。
+                    # 修复: 在小节结束时刻添加一个 scroll_y 等于最后一拍位置的哨兵 entry。
+                    #       time_to_scroll_pos() 检测到哨兵后会直接返回 scroll_y (不插值)，
+                    #       使空白期播放条停留在最后一拍位置。
+                    if beats_in_measure:
+                        measure_end_entry = {
+                            'time_ms': current_time_ms,  # 小节结束时刻
+                            'scroll_y': last_beat_scroll_y,
+                            'page_idx': page_idx,
+                            'sys_idx': sys_idx,
+                            'meas_idx': meas_idx,
+                            'global_meas_idx': global_meas_idx,
+                            'beat_idx': len(beats_in_measure),  # 标记为小节末尾
+                            'x_center': 0, 'x_start': 0, 'x_end': 0,
+                            'y_top': system.y_tab_top,
+                            'y_bottom': system.y_tab_bottom,
+                            '_is_measure_end': True,  # 哨兵标记，time_to_scroll_pos 会特殊处理
+                        }
+                        self._playhead_timeline.append(measure_end_entry)
+                    
                     # [v2.0.6修复] 每处理完一个小节，全局ID递增(确保跨系统/页唯一)
                     global_meas_idx += 1
         
         # === 后处理: 确保scroll_y严格单调递增 + 可选哨兵 ===
         if self._playhead_timeline:
             # 强制单调递增(防止布局数据异常导致回退)
+            # [v1.3.3修复] 跳过小节末尾哨兵 entry (_is_measure_end=True)，
+            # 它的 scroll_y 应等于小节最后一拍位置，不能被强制递增。
             prev_y = -1.0
             for entry in self._playhead_timeline:
+                if entry.get('_is_measure_end', False):
+                    # 哨兵 entry: 保持原 scroll_y 不变
+                    prev_y = entry['scroll_y']
+                    continue
                 if entry['scroll_y'] <= prev_y:
                     entry['scroll_y'] = prev_y + 0.5  # 最小增量保证递增
                 prev_y = entry['scroll_y']
@@ -1792,12 +1824,21 @@ class GTPPlayer:
         # 线性插值
         curr = self._playhead_timeline[idx]
         next_e = self._playhead_timeline[idx + 1]
-        dt = next_e['time_ms'] - curr['time_ms']
-        if dt <= 0:
+        
+        # [v1.3.3修复] 小节末尾哨兵 entry: 播放条停留在最后一拍位置
+        # 原理: time_to_scroll_pos 默认会从 curr 线性插值到 next_e,
+        #       若 curr 是小节末尾哨兵(scroll_y = 最后一拍位置), 插值会
+        #       跳到下一小节第一拍位置，导致中间空白未走。
+        # 修复: 检测 curr 是哨兵时直接返回 curr.scroll_y (不插值)
+        if curr.get('_is_measure_end', False):
             scroll_y = curr['scroll_y']
         else:
-            t = (time_ms - curr['time_ms']) / dt
-            scroll_y = curr['scroll_y'] + t * (next_e['scroll_y'] - curr['scroll_y'])
+            dt = next_e['time_ms'] - curr['time_ms']
+            if dt <= 0:
+                scroll_y = curr['scroll_y']
+            else:
+                t = (time_ms - curr['time_ms']) / dt
+                scroll_y = curr['scroll_y'] + t * (next_e['scroll_y'] - curr['scroll_y'])
 
         # 映射到显示区域(减去可视区域高度的一半，让光标居中)
         centered_pos = max(0, scroll_y - display_height / 2)
