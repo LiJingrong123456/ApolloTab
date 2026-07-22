@@ -967,15 +967,13 @@ class GTPPlayer:
         self._gain = linear_gain
         if self._synth_engine and self._synth_engine.is_initialized:
             try:
-                # 直接修改synth_engine的gain属性
+                # [封装] 通过公共 API 设置 gain 与主音量
+                # 不再直接访问 self._synth_engine._synth
                 self._synth_engine.gain = linear_gain
-                # 通过FluidSynth API设置主音量
-                if hasattr(self._synth_engine, '_synth') and self._synth_engine._synth:
-                    # FluidSynth的gain属性在初始化时设置，运行时修改需要重新创建
-                    # 这里我们通过降低每个通道的音量来模拟总音量控制
-                    for ch in range(16):
-                        master_vol = int(linear_gain * 127)
-                        self._synth_engine._synth.cc(ch, 7, min(127, max(0, master_vol)))
+                # FluidSynth 的 gain 在初始化后不可热修改，
+                # 用公共 set_master_volume() 对全部 16 通道发送 CC#7 模拟
+                master_vol = int(linear_gain * 127)
+                self._synth_engine.set_master_volume(master_vol)
             except Exception as e:
                 print(f"[GTPPlayer] 设置主音量失败: {e}")
     
@@ -1001,8 +999,6 @@ class GTPPlayer:
           - 单轨模式下只有当前轨一个通道，效果等同于Master音量
           - 如果音频引擎未初始化，仅保存设置值(待后续init_audio时应用)
         """
-        import math
-        
         # 将dB值转换为MIDI音量值(0-127)
         # 映射规则: -60dB→0, 0dB→100(默认), +12dB→127
         if db_value <= -60.0:
@@ -1024,19 +1020,19 @@ class GTPPlayer:
         # 尝试实时应用到音频引擎
         if self._synth_engine and self._synth_engine.is_initialized:
             try:
-                # 获取该音轨对应的MIDI通道
+                # [封装] 通过公共 set_channel_volume 发送 CC#7
+                # 不再直接访问 self._synth_engine._synth
                 if self._audio_mode == self.MODE_ALL and self._track_channels:
                     # 全轨模式: 每个音轨有独立的MIDI通道
                     if track_index < len(self._track_channels):
                         channel = self._track_channels[track_index]
-                        # 发送MIDI CC#7 (Volume)消息
-                        self._synth_engine._synth.cc(channel, 7, midi_volume)
-                        print(f"[GTPPlayer] Track {track_index} (CH{channel}): {midi_volume}/127")
+                        if self._synth_engine.set_channel_volume(channel, midi_volume):
+                            print(f"[GTPPlayer] Track {track_index} (CH{channel}): {midi_volume}/127")
                 elif self._audio_mode == self.MODE_CURRENT:
                     # 单轨模式: 只有一个活动通道(通常是channel 0)
                     # 所有音轨滑块都控制同一个通道
-                    self._synth_engine._synth.cc(0, 7, midi_volume)
-                    print(f"[GTPPlayer] Track {track_index} (CH0): {midi_volume}/127")
+                    if self._synth_engine.set_channel_volume(0, midi_volume):
+                        print(f"[GTPPlayer] Track {track_index} (CH0): {midi_volume}/127")
             except Exception as e:
                 print(f"[GTPPlayer] 设置音轨{track_index}音量失败: {e}")
     
@@ -1225,27 +1221,32 @@ class GTPPlayer:
     
     @property
     def is_loop_enabled(self) -> bool:
-        """是否已启用A/B区域循环"""
+        """
+        是否已启用A/B区域循环
+
+        [封装] 通过 SynthEngine.is_loop_enabled 公共属性查询，
+        不再直接访问 self._synth_engine._lock / self._synth_engine._loop_enabled
+        """
         if self._synth_engine:
-            with self._synth_engine._lock:
-                return self._synth_engine._loop_enabled
+            return self._synth_engine.is_loop_enabled
         return False
-    
+
     @property
     def loop_time_range(self) -> tuple:
         """
         获取当前A/B循环的时间范围(毫秒)
-        
+
         返回:
-            (loop_start_ms, loop_end_ms) 元组，若循环未启用则返回 (0, 0)
-            
+            (loop_start_ms, loop_end_ms) 元组，若循环未启用则返回 (0.0, 0.0)
+
         用途: UI层判断点击的小节是否在循环区间内
+
+        [封装] 通过 SynthEngine.loop_time_range 公共属性查询，
+        不再直接访问 self._synth_engine._lock / self._synth_engine._loop_*
         """
         if self._synth_engine:
-            with self._synth_engine._lock:
-                if self._synth_engine._loop_enabled:
-                    return (self._synth_engine._loop_start_ms, self._synth_engine._loop_end_ms)
-        return (0, 0)
+            return self._synth_engine.loop_time_range
+        return (0.0, 0.0)
     
     def find_measure_at_scroll_pos(self, scroll_y: float) -> Optional[dict]:
         """
@@ -1488,6 +1489,8 @@ class GTPPlayer:
                         continue
                     
                     # 遍历该小节的所有拍
+                    # [v1.3.2修复] 记录小节起始 tick，用于末尾对齐 measure_ticks
+                    measure_start_ticks = current_time_ticks
                     for beat_idx, b_layout in enumerate(beats_in_measure):
                         # === 计算 scroll_y: 每个拍有独立递增的Y位置 ===
                         sys_beats_count = sum(len(m.beats) for m in system.measures)
@@ -1529,6 +1532,14 @@ class GTPPlayer:
                         beat_duration_ticks = int(ticks_per_beat * beat_duration_value)
                         current_time_ticks += max(beat_duration_ticks, 1)
                         current_time_ms = current_time_ticks * ms_per_tick
+                    
+                    # [v1.3.2修复] 将 current_time_ticks 对齐到拍号计算的 measure_ticks
+                    # 原理: 各拍 beat_duration_ticks 之和可能因 int() 浮点截断（如三连音
+                    #       int(480*0.3333)=159）而小于 measure_ticks，导致下一小节提前开始。
+                    #       对齐后确保播放条在最后一个音完整播完后再进入下小节。
+                    # measure_ticks 已在第1455行由拍号计算得到
+                    current_time_ticks = measure_start_ticks + measure_ticks
+                    current_time_ms = current_time_ticks * ms_per_tick
                     
                     # [v2.0.6修复] 每处理完一个小节，全局ID递增(确保跨系统/页唯一)
                     global_meas_idx += 1

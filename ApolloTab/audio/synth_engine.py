@@ -1057,6 +1057,122 @@ class SynthEngine:
             except Exception:
                 pass
     
+    # ================================================================
+    # [封装] 公共 API：通道音量与循环状态
+    # ================================================================
+    #
+    # 之前 GTPPlayer 直接访问 self._synth / self._lock / self._loop_*
+    # 破坏了 SynthEngine 的封装。这些方法/属性作为公共 API 暴露必要的
+    # 状态查询与通道控制，外部调用方不应再访问私有成员。
+    #
+
+    @property
+    def is_synth_available(self) -> bool:
+        """
+        FluidSynth Synth 实例是否当前可用（已初始化且未被释放）
+
+        替代外部代码的 `hasattr(self, '_synth') and self._synth` 检查。
+        """
+        return self._synth is not None
+
+    def set_channel_volume(self, channel: int, midi_volume: int) -> bool:
+        """
+        设置单个 MIDI 通道的音量 (MIDI CC#7)
+
+        参数:
+            channel:      MIDI 通道号 (0-15)
+            midi_volume:  音量值 (0-127)，其中 127=最大, 0=静音, 100=默认
+
+        返回:
+            True:  消息已发送
+            False: Synth 未初始化或通道号非法
+
+        说明:
+            实时生效，无需重启播放。用于单轨/全轨模式下控制各通道音量。
+        """
+        if not self._synth:
+            return False
+        if channel < 0 or channel > 15:
+            return False
+        midi_volume = max(0, min(127, int(midi_volume)))
+        try:
+            self._synth.cc(channel, 7, midi_volume)
+            return True
+        except Exception:
+            return False
+
+    def set_master_volume(self, midi_volume: int) -> bool:
+        """
+        设置主音量（通过同时调整全部 16 个 MIDI 通道的 CC#7 实现）
+
+        参数:
+            midi_volume: 音量值 (0-127)
+
+        返回:
+            True:  所有通道均设置成功
+            False: Synth 未初始化
+
+        原理:
+            FluidSynth 的 gain 属性在初始化时设置后运行时不可热修改。
+            改用对全部 16 个通道发送 CC#7 来实现"运行时主音量"控制。
+        """
+        if not self._synth:
+            return False
+        midi_volume = max(0, min(127, int(midi_volume)))
+        try:
+            for ch in range(16):
+                self._synth.cc(ch, 7, midi_volume)
+            return True
+        except Exception:
+            return False
+
+    @property
+    def loop_state(self) -> dict:
+        """
+        获取当前 A/B 区域循环状态（公共只读）
+
+        返回:
+            dict: {
+                'enabled':      bool,   # 是否启用循环
+                'start_ms':     float,  # 循环起始时间（毫秒）
+                'end_ms':       float,  # 循环结束时间（毫秒）
+            }
+            若循环未启用，则 start_ms / end_ms 为 0.0
+
+        说明:
+            替代外部直接访问 self._lock / self._loop_enabled / self._loop_* 的模式。
+        """
+        with self._lock:
+            if self._loop_enabled:
+                return {
+                    'enabled': True,
+                    'start_ms': self._loop_start_ms,
+                    'end_ms': self._loop_end_ms,
+                }
+        return {'enabled': False, 'start_ms': 0.0, 'end_ms': 0.0}
+
+    @property
+    def is_loop_enabled(self) -> bool:
+        """是否启用 A/B 区域循环（公共只读）"""
+        with self._lock:
+            return self._loop_enabled
+
+    @property
+    def loop_time_range(self) -> tuple:
+        """
+        获取当前 A/B 循环的时间范围（毫秒）
+
+        返回:
+            (loop_start_ms, loop_end_ms) 元组
+            循环未启用时返回 (0.0, 0.0)
+
+        用途: UI 层判断点击的小节是否在循环区间内
+        """
+        with self._lock:
+            if self._loop_enabled:
+                return (self._loop_start_ms, self._loop_end_ms)
+        return (0.0, 0.0)
+
     def seek(self, time_ms: float) -> None:
         """
         跳转到指定时间位置(毫秒)
