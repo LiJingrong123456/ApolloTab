@@ -33,12 +33,41 @@ from ..utils.constants import (
 class GTPParser:
     """
     GTP文件解析器
-    
+
     功能: 将 PyGuitarPro 的原始数据结构转换为 gtp_engine 中介数据模型
     用法:
         parser = GTPParser()
         song = parser.parse("path/to/song.gp5")
     """
+
+    # [v1.x.x] 音轨名 → MIDI Program 映射表
+    # 用途: 当 GTP 文件音轨未显式定义(或使用了不恰当的默认)音色时,
+    #       根据音轨名自动分配 GM 标准乐器。
+    # 顺序敏感: 较具体的关键词放在前面,先匹配先生效。
+    #   例: "Nylon Guitar" 优先于 "Acoustic Guitar",避免
+    #       "Nylon Acoustic Guitar" 被误判为钢弦。
+    # GM Program 编号:
+    #   0  = Acoustic Grand Piano(原声钢琴)
+    #   24 = Nylon Acoustic Guitar(尼龙弦吉他)
+    #   25 = Steel Acoustic Guitar(钢弦吉他)
+    #   29 = Overdriven Guitar(过载电吉他)
+    NAME_BASED_INSTRUMENT_MAP = (
+        ('Nylon Guitar',      24),  # 尼龙弦吉他
+        ('Acoustic Guitar',   25),  # 钢弦吉他
+        ('Steel Guitar',      25),  # 钢弦吉他
+        ('Overdriven Guitar', 29),  # 过载电吉他
+        ('Piano',              0),  # 钢琴
+        ('Keyboard',           0),  # 键盘(分配钢琴音色)
+    )
+
+    # 鼓轨识别关键词(本地定义,避免与 audio.midi_converter 形成循环依赖)
+    # 名称包含这些关键词的音轨视为打击乐,跳过名称推断逻辑。
+    DRUM_KEYWORDS = ('drum', 'percussion', 'drums', 'perc', '鼓')
+
+    # pyguitarpro MidiChannel.instrument 的默认值(钢弦吉他)
+    # 当 GTP 文件未显式定义音轨音色时,解析后保持此值;
+    # 这是"音轨未定义音色"的最可靠判定依据。
+    DEFAULT_INSTRUMENT = 25
 
     def parse(self, file_path: str) -> GTPSong:
         """
@@ -113,19 +142,69 @@ class GTPParser:
         except Exception:
             return 0
 
-    def _convert_track(self, raw_track: guitarpro.models.Track, 
+    @classmethod
+    def _infer_instrument_from_name(cls, track_name: str) -> Optional[int]:
+        """
+        根据音轨名称推断 MIDI 乐器编号
+
+        匹配规则:
+          - 不区分大小写,子串匹配
+          - 按 NAME_BASED_INSTRUMENT_MAP 顺序逐项检查,首个匹配生效
+          - 打击乐轨(名称含 DRUM_KEYWORDS)直接返回 None,跳过推断
+
+        参数:
+            track_name: 音轨名称(可为 None/空字符串)
+
+        返回:
+            匹配的 MIDI Program 编号 (0-127);无匹配或为打击乐轨时返回 None
+
+        示例:
+            >>> _infer_instrument_from_name("Acoustic Guitar")
+            25
+            >>> _infer_instrument_from_name("piano")
+            0
+            >>> _infer_instrument_from_name("Nylon Guitar Track 1")
+            24
+            >>> _infer_instrument_from_name("Drums")
+            None
+        """
+        if not track_name:
+            return None
+
+        name_lower = track_name.lower()
+
+        # 打击乐轨直接跳过(保留原始 instrument 设置)
+        if any(kw in name_lower for kw in cls.DRUM_KEYWORDS):
+            return None
+
+        for keyword, program in cls.NAME_BASED_INSTRUMENT_MAP:
+            if keyword.lower() in name_lower:
+                return program
+
+        return None
+
+    def _convert_track(self, raw_track: guitarpro.models.Track,
                        raw_song: guitarpro.models.Song) -> GTPTrack:
         """转换音轨对象"""
         # 提取调弦信息 (MIDI音高值列表)
         tuning = tuple(s.value for s in raw_track.strings)
-        
+
         # 获取MIDI乐器编号
         instrument = 0
         if hasattr(raw_track.channel, 'instrument'):
             instrument = raw_track.channel.instrument
         elif raw_track.channel:
             instrument = getattr(raw_track.channel, 'instrument', 30)
-        
+
+        # [v1.x.x] 仅当音轨未显式定义音色时,才根据音轨名推断
+        # pyguitarpro 在文件未指定 instrument 时会保持其默认值 25(钢弦吉他),
+        # 因此以 instrument == DEFAULT_INSTRUMENT 作为"未定义"的判定条件。
+        # 满足条件且音轨名命中关键词时(且非打击乐轨)才覆盖,否则保留文件原值。
+        if instrument == self.DEFAULT_INSTRUMENT:
+            inferred = self._infer_instrument_from_name(raw_track.name or "")
+            if inferred is not None:
+                instrument = inferred
+
         track = GTPTrack(
             name=raw_track.name or "",
             number=raw_track.number,
